@@ -1,41 +1,48 @@
 # discover_device.py
+# -----------------------------------------------------------
+# Découverte des appareils intelligents Kasa sur le réseau local.
+# Ce module utilise la bibliothèque kasa pour détecter les appareils,
+# récupérer leurs informations et préparer leur contrôle.
+# -----------------------------------------------------------
 import asyncio
-# Note: We'll keep using SmartDevice for discovery for now, but acknowledge the warning.
+# Note: Nous continuons d'utiliser SmartDevice pour la découverte,
+# mais une refonte future pourrait impliquer les classes kasa.iot.
 # A deeper refactor might involve kasa.iot classes later if needed.
 from kasa import Discover, KasaException, SmartDevice
 
 class DeviceDiscoverer:
     """
-    Discovers Kasa smart devices on the local network.
+    Découvre les appareils intelligents Kasa présents sur le réseau local.
     """
     async def discover(self) -> list[dict]:
         """
-        Scans the network and returns information about discovered Kasa devices.
+        Analyse le réseau et retourne une liste d'informations sur les appareils Kasa détectés.
 
-        Returns:
-            list[dict]: A list of dictionaries, each representing a device.
-                       Example:
-                       [
-                           {
-                               'ip': '192.168.0.98',
-                               'alias': 'TP-LINK_Power Strip_54A7',
-                               'model': 'KP303(US)',
-                               'mac': 'B0:95:75:XX:XX:XX',
-                               'rssi': -55,
-                               'hw_ver': '1.0',
-                               'sw_ver': '1.0.5...',
-                               'has_emeter': False,
-                               'is_strip': True,
-                               'is_plug': False, # Added for clarity
-                               'outlets': [
-                                   {'index': 0, 'alias': 'Fan', 'is_on': True},
-                                   {'index': 1, 'alias': 'Heat', 'is_on': True},
-                                   {'index': 2, 'alias': 'Pump', 'is_on': True}
-                               ]
-                           },
-                           # ... more devices
-                       ]
+        Retourne:
+            list[dict]: Une liste de dictionnaires, chacun représentant un appareil.
+                        Exemple:
+                        [
+                            {
+                                'ip': '192.168.0.98',
+                                'alias': 'TP-LINK_Power Strip_54A7',
+                                'model': 'KP303(US)',
+                                'mac': 'B0:95:75:XX:XX:XX',
+                                'rssi': -55,
+                                'hw_ver': '1.0',
+                                'sw_ver': '1.0.5...',
+                                'has_emeter': False,
+                                'is_strip': True,
+                                'is_plug': False,  # Indique si c'est une prise simple
+                                'outlets': [
+                                    {'index': 0, 'alias': 'Fan', 'is_on': True},
+                                    {'index': 1, 'alias': 'Heat', 'is_on': True},
+                                    {'index': 2, 'alias': 'Pump', 'is_on': True}
+                                ]
+                            },
+                            # ... autres appareils
+                        ]
         """
+        # Démarre la découverte des appareils Kasa
         print("Starting Kasa device discovery...")
         discovered_devices_info = []
         try:
@@ -46,6 +53,7 @@ class DeviceDiscoverer:
 
             print(f"Found {len(found_devices)} device(s). Fetching details...")
 
+            # Parcourt chaque appareil trouvé pour récupérer ses détails
             for ip, device in found_devices.items():
                 try:
                     await device.update()
@@ -80,7 +88,7 @@ class DeviceDiscoverer:
                         'outlets': []
                     }
 
-                    # --- Process outlets based on safely accessed type flags ---
+                    # --- Traite les prises multiples ou simples selon le type détecté ---
                     if device_info['is_strip'] and hasattr(device, 'children') and device.children:
                         # Check hasattr for children too, just in case
                         for i, plug in enumerate(device.children):
@@ -103,17 +111,17 @@ class DeviceDiscoverer:
                     print(f"  - Added: {device_info['alias']} ({ip}) - MAC: {device_info['mac']} RSSI: {device_info['rssi']}")
 
                 except KasaException as e:
-                    # Log Kasa specific errors during update/processing
+                    # Gère les erreurs spécifiques à Kasa lors de la mise à jour ou du traitement
                     print(f"  - Kasa error processing device {ip}: {e}. Skipping.")
                 except Exception as e:
-                    # Log other unexpected errors during processing
+                    # Gère les autres erreurs inattendues lors du traitement
                     print(f"  - Unexpected error processing device {ip}: {e}. Skipping.")
 
         except KasaException as e:
-            # Log Kasa specific errors during the main discovery call
+            # Gère les erreurs spécifiques à Kasa lors de la phase de découverte principale
             print(f"Error during discovery phase: {e}")
         except Exception as e:
-            # Log other unexpected errors during the main discovery call
+            # Gère les autres erreurs inattendues lors de la phase de découverte principale
             print(f"An unexpected error occurred during discovery phase: {e}")
 
         print("Discovery finished.")
@@ -121,6 +129,9 @@ class DeviceDiscoverer:
 
 # Example usage (for testing this file directly)
 # (No changes needed in the __main__ block below)
+# -----------------------------------------------------------
+# Bloc de test pour exécuter la découverte directement
+# -----------------------------------------------------------
 if __name__ == "__main__":
     async def test_discovery():
         discoverer = DeviceDiscoverer()
