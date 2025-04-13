@@ -19,6 +19,6 @@ python3 -m venv serre_auto # pour appeler l'environnement serre_auto
 
 source serre_auto/bin/activate #active l'environnement
 
-pip install requirements.txt #ça va installer les dépendances requises pour runner le code
+pip install -r requirements.txt #ça va installer les dépendances requises pour runner le code
 
 python main.py  #va rouler l'app
