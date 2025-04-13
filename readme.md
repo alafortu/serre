@@ -57,7 +57,8 @@ sudo modprobe w1-gpio
 sudo modprobe w1-therm
 
 cd serre  #on va dans le folder serre
-source serre_auto/bin/activate    #activer l'environnement
+
+source serre_auto/bin/activate    #il faut activer l'environnement 
 
 pip install w1thermsensor   #je vais l'ajouter au requirements.txt c'est un module qui contrôle les sensors ds18b20
 
@@ -67,7 +68,7 @@ git pull origin main  #va mettre à jour le code sur le raspberry pi
 
 cd test #j'ai mis le code de sensor dans les codes tests
 
-python test_temp_sensor.py  #va rouler le code qui lit les températures des sensors de temp
+python test_temp_sensor.py  #va rouler le code qui lit les températures des sensors de température 
 
 
 
