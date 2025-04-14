@@ -1,0 +1,9 @@
+reste à :
+1. tester light_sensor.py
+2. tester app.py
+3. ajouter une authentification car streamlit poste une adresse réseau
+4. intégrer la détection réelle des light sensors dans app.py car là c'est un placeholder
+5. cleaner folder tester
+6. compléter le requirements.txt
+7. créer un gitignore
+8. revoir l'ensemble du code pour propreté, clarté
