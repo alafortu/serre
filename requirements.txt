@@ -1,7 +1,8 @@
 python-kasa
 w1thermsensor
 smbus2 
-bh1750
+adafruit-blinka
+adafruit-circuitpython-bh1750
 tk 
 PyYAML 
 asyncio 
