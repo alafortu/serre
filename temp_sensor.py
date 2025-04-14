@@ -1,4 +1,4 @@
-#test_temp_sensor.py
+#temp_sensor.py
 
 #!/usr/bin/env python3
 from w1thermsensor import W1ThermSensor, SensorNotReadyError
