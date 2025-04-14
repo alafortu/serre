@@ -893,30 +893,66 @@ class GreenhouseApp:
         logging.info("Monitoring arrêté.")
 
     def _set_rules_ui_state(self, state):
-        """Active ou désactive tous les widgets dans les règles."""
+        """Active ou désactive les widgets d'édition dans les règles."""
+        # Activer/Désactiver le bouton "Ajouter Règle" (trouver le bouton)
+        try:
+            # Chercher le bouton "Ajouter Règle" de manière plus robuste
+            main_frame = self.root.winfo_children()[0] # Suppose que main_frame est le premier enfant
+            add_button = next(w for w in main_frame.winfo_children() if isinstance(w, ttk.Button) and "Ajouter" in w.cget("text"))
+            if add_button:
+                add_button.config(state=state)
+        except (IndexError, StopIteration, tk.TclError) as e:
+             logging.warning(f"Impossible de trouver ou configurer le bouton 'Ajouter Règle': {e}")
+
+
+        # Parcourir les widgets de chaque règle
         for rule_id, data in self.rule_widgets.items():
             widgets_dict = data['widgets']
+            rule_frame = data['frame'] # Le frame contenant cette règle
+
+            # Trouver le bouton Supprimer associé à cette règle
+            try:
+                delete_button = next(w for w in rule_frame.winfo_children() if isinstance(w, ttk.Button) and "🗑️" in w.cget("text"))
+                if delete_button:
+                     delete_button.config(state=state)
+            except (StopIteration, tk.TclError) as e:
+                 logging.warning(f"Impossible de trouver ou configurer le bouton 'Supprimer' pour la règle {rule_id}: {e}")
+
+
+            # Parcourir les widgets principaux DANS le dictionnaire de la règle
             for widget_name, widget in widgets_dict.items():
-                 # Les frames n'ont pas de 'state' standard, on traite les widgets contenus
-                if isinstance(widget, (ttk.Combobox, ttk.Entry, ttk.Button)):
+                # Appliquer l'état SEULEMENT aux types de widgets appropriés
+                if isinstance(widget, (ttk.Combobox, ttk.Entry)):
                     try:
-                        # Le bouton delete est dans le frame principal, pas dans widgets_dict
-                        # Il faut le traiter séparément ou l'ajouter au dict
-                        widget.config(state=state)
-                    except tk.TclError:
-                         pass # Certains widgets (comme les frames) n'ont pas d'état
+                        widget.config(state=state if state == tk.DISABLED else 'readonly' if isinstance(widget, ttk.Combobox) else tk.NORMAL)
+                        # Note: On remet 'readonly' aux Combobox si on active, sinon NORMAL pour Entry
+                        if state == tk.NORMAL and isinstance(widget, ttk.Combobox):
+                             widget.config(state='readonly') # Les combobox restent readonly
+                        elif state == tk.NORMAL and isinstance(widget, ttk.Entry):
+                             widget.config(state=tk.NORMAL)
+                        elif state == tk.DISABLED:
+                              widget.config(state=tk.DISABLED)
+
+                    except tk.TclError as e:
+                        logging.warning(f"Erreur Tcl en configurant l'état pour {widget_name} (règle {rule_id}): {e}")
                 elif isinstance(widget, tk.Frame):
-                     # Désactiver/Activer les widgets DANS les frames (pour JUSQU'A)
-                     for child_widget in widget.winfo_children():
-                         if isinstance(child_widget, (ttk.Combobox, ttk.Entry, ttk.Button)):
+                    # Pour les Frames (comme until_timer_frame, until_sensor_frame),
+                    # configurer les widgets *à l'intérieur* du frame.
+                    for child_widget in widget.winfo_children():
+                        if isinstance(child_widget, (ttk.Combobox, ttk.Entry)):
                              try:
-                                 child_widget.config(state=state)
-                             except tk.TclError:
-                                 pass
-        # Activer/Désactiver le bouton "Ajouter Règle"
-        add_button = next((w for w in self.root.winfo_children() if isinstance(w, ttk.Frame) for w2 in w.winfo_children() if isinstance(w2, ttk.Button) and "Ajouter" in w2.cget("text")), None)
-        if add_button:
-           add_button.config(state=state)
+                                 # Appliquer la même logique que ci-dessus pour les enfants
+                                 if state == tk.NORMAL and isinstance(child_widget, ttk.Combobox):
+                                     child_widget.config(state='readonly')
+                                 elif state == tk.NORMAL and isinstance(child_widget, ttk.Entry):
+                                     child_widget.config(state=tk.NORMAL)
+                                 elif state == tk.DISABLED:
+                                     child_widget.config(state=tk.DISABLED)
+                             except tk.TclError as e:
+                                 logging.warning(f"Erreur Tcl en configurant l'état pour un enfant de {widget_name} (règle {rule_id}): {e}")
+                        # Ne pas toucher aux Labels dans les frames 'until'
+
+                # Ignorer les autres types comme StringVar, etc.
 
 
     def _run_monitoring_loop(self):
