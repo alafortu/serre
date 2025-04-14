@@ -1241,22 +1241,30 @@ class GreenhouseApp:
         logging.info("Extinction de sécurité terminée.")
 
 
-    # --- Sauvegarde / Fermeture ---
     def save_configuration(self):
         """Récupère les règles de l'UI et sauvegarde la configuration."""
         # S'assurer que les dernières modifications UI sont dans self.rules
+        logging.info("Préparation de la sauvegarde : mise à jour des données des règles depuis l'UI...")
         for rule_id in self.rule_widgets.keys():
-             self.on_rule_change(rule_id) # Force la mise à jour des données internes depuis l'UI
+             try:
+                 self.on_rule_change(rule_id) # Force la mise à jour des données internes depuis l'UI
+             except Exception as e:
+                 logging.error(f"Erreur pendant on_rule_change pour {rule_id} lors de la sauvegarde: {e}")
+                 # On continue quand même pour essayer de sauvegarder le reste
 
         config_to_save = {
             "aliases": self.aliases, # Utiliser les alias potentiellement mis à jour
             "rules": self.rules
         }
+
+        # --- AJOUT DE DEBUG ---
+        logging.debug(f"Données prêtes pour la sauvegarde : {config_to_save}")
+        # --- FIN DE L'AJOUT ---
+
         if save_config(config_to_save, DEFAULT_CONFIG_FILE):
             messagebox.showinfo("Sauvegarde", "Configuration sauvegardée avec succès.", parent=self.root)
         else:
             messagebox.showerror("Sauvegarde", "Erreur lors de la sauvegarde de la configuration.", parent=self.root)
-
     def on_closing(self):
         """Gère la fermeture de l'application."""
         if self.monitoring_active:
