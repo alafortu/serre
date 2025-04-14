@@ -301,8 +301,9 @@ if st.button("Ajouter une règle"):
 st.write("Règles actuelles :", st.session_state.rules)
 
 # --- Boutons de lancement / arrêt / sauvegarde ---
+# --- Boutons de lancement / arrêt / sauvegarde ---
 col_start, col_stop, col_save = st.columns(3)
-global background_thread
+
 if col_start.button("Gère ma serre"):
     if (background_thread is None) or (not background_thread.is_alive()):
         stop_event.clear()
@@ -331,6 +332,7 @@ if col_save.button("Sauvegarder configuration"):
     with open("serre_config.json", "w") as f:
         json.dump(config, f, indent=2)
     st.success("Configuration sauvegardée dans serre_config.json")
+
 
 # --- Affichage en temps réel des lectures ---
 st.header("État en temps réel des capteurs")
