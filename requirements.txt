@@ -1,3 +1,4 @@
 python-kasa
 w1thermsensor
 bh1750
+streamlit
