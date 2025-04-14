@@ -113,6 +113,7 @@ class GreenhouseApp:
             self.refresh_device_lists() # Rafraîchit les listes internes
             self.repopulate_all_rule_dropdowns() # Met à jour les dropdowns dans les règles existantes
             self.update_status_display() # Met à jour les labels dans la section statut
+            self.root.update_idletasks() # Forcer Tkinter à traiter les changements d'UI
 
     # --- Création des Widgets ---
     def create_widgets(self):
@@ -734,85 +735,70 @@ class GreenhouseApp:
             self.ui_update_job = None
 
     def update_live_status(self):
-         """Met à jour les valeurs affichées dans la section Statut (appelée périodiquement)."""
-         if not self.monitoring_active: return # Ne pas mettre à jour si arrêté
+        """Met à jour UNIQUEMENT LES VALEURS affichées dans la section Statut."""
+        if not self.monitoring_active: return # Ne pas mettre à jour si arrêté
 
-         logging.debug("Mise à jour des valeurs de statut en direct.")
+        logging.debug("Mise à jour des valeurs de statut en direct.")
 
-         # --- Mettre à jour les capteurs ---
-         temp_readings = self.temp_manager.read_all_temperatures()
-         light_readings = self.light_manager.read_all_sensors()
+        # --- Mettre à jour les VALEURS des capteurs ---
+        temp_readings = self.temp_manager.read_all_temperatures()
+        light_readings = self.light_manager.read_all_sensors()
 
-         for sensor_id, data in self.status_labels.items():
-             if data['type'] == 'sensor':
-                 value = None
-                 unit = ""
-                 is_temp = sensor_id in temp_readings
-                 is_light = sensor_id in light_readings
+        for sensor_id, data in self.status_labels.items():
+            if data['type'] == 'sensor':
+                # On met à jour SEULEMENT label_value
+                value = None
+                unit = ""
+                is_temp = sensor_id in temp_readings
+                is_light = sensor_id in light_readings
 
-                 if is_temp:
-                     value = temp_readings.get(sensor_id)
-                     unit = "°C"
-                 elif is_light:
-                     value = light_readings.get(sensor_id)
-                     unit = " Lux"
+                if is_temp:
+                    value = temp_readings.get(sensor_id)
+                    unit = "°C"
+                elif is_light:
+                    value = light_readings.get(sensor_id)
+                    unit = " Lux"
 
-                 if value is not None:
-                     display_text = f"{value:.1f}{unit}" if isinstance(value, float) else f"{value}{unit}"
-                     data['label_value'].config(text=display_text)
-                 else:
-                     data['label_value'].config(text="Erreur/N/A")
+                if value is not None:
+                    display_text = f"{value:.1f}{unit}" if isinstance(value, float) else f"{value}{unit}"
+                    # Vérifier si le label existe toujours (par précaution)
+                    if data['label_value'].winfo_exists():
+                         data['label_value'].config(text=display_text)
+                else:
+                    if data['label_value'].winfo_exists():
+                         data['label_value'].config(text="Erreur/N/A")
 
-                 # Mettre à jour l'alias au cas où il aurait été modifié
-                 data['label_name'].config(text=f"{self.get_alias('sensor', sensor_id)}:")
-                 # Reconfigurer la commande du bouton edit pour utiliser le nouvel alias potentiel
-                 # (Note: La capture lambda capture la valeur au moment de la création, il faut la recréer ou utiliser une méthode)
-                 # Solution simple : ne pas mettre à jour le bouton ici, ou le recréer.
-                 # Pour l'instant, on laisse, l'alias dans le dialogue sera le bon au moment du clic.
+                # # LIGNE SUPPRIMÉE/COMMENTÉE: Ne pas mettre à jour le nom ici
+                # # data['label_name'].config(text=f"{self.get_alias('sensor', sensor_id)}:")
 
-
-         # --- Mettre à jour les états Kasa (Nécessite une requête asynchrone) ---
-         # Ceci est plus complexe car get_outlet_state est asynchrone.
-         # Idéalement, la boucle de monitoring (dans le thread asyncio) mettrait à jour
-         # périodiquement un état partagé, et cette fonction lirait cet état partagé.
-
-         # **Approche Simplifiée (Synchrone - NON RECOMMANDÉE car bloque l'UI):**
-         # for ip, data in self.kasa_devices.items():
-         #     try:
-         #         # Ceci bloquerait l'UI. NE PAS FAIRE CECI.
-         #         # states = asyncio.run(data['controller'].get_outlet_state())
-         #         pass # Laisser la boucle asyncio gérer la mise à jour
-         #     except Exception as e:
-         #         logging.warning(f"Impossible de récupérer l'état de {ip} pour l'affichage: {e}")
-
-         # **Approche Correcte (via état partagé mis à jour par la boucle asyncio):**
-         # Lire l'état depuis une structure mise à jour par _run_monitoring_loop
-         # Exemple: self.current_kasa_states = {ip: {index: is_on, ...}}
-         for key, data in self.status_labels.items():
+        # --- Mettre à jour les VALEURS des états Kasa ---
+        # (Utilise l'état partagé mis à jour par la boucle asyncio)
+        for key, data in self.status_labels.items():
             if data['type'] == 'outlet':
                 ip = data['ip']
                 index = data['index']
-                # Récupérer l'état depuis la structure partagée (à implémenter dans la boucle asyncio)
-                current_state = self._get_shared_kasa_state(ip, index) # Fonction à créer
-                data['label_value'].config(text=current_state)
-                # Mettre à jour l'alias au cas où
-                device_alias = self.get_alias('device', ip)
-                outlet_alias = self.get_alias('outlet', ip, sub_id=index)
-                data['label_name'].config(text=f"└─ {outlet_alias}:")
-                # Mettre à jour le bouton edit (même remarque que pour les capteurs)
+                current_state = self._get_shared_kasa_state(ip, index) # Fonction placeholder
+                # Vérifier si le label existe toujours
+                if data['label_value'].winfo_exists():
+                     data['label_value'].config(text=current_state)
 
-            elif data['type'] == 'device':
-                 # Mettre à jour l'alias de l'appareil
-                 ip = key # Pour les devices, la clé est l'IP
-                 device_alias = self.get_alias('device', ip)
-                 data['label_name'].config(text=f"{device_alias} ({ip}):")
-                 # Mettre à jour le bouton edit
+                # # LIGNE SUPPRIMÉE/COMMENTÉE: Ne pas mettre à jour le nom ici
+                # # device_alias = self.get_alias('device', ip) # Pas nécessaire ici
+                # # outlet_alias = self.get_alias('outlet', ip, sub_id=index)
+                # # data['label_name'].config(text=f"└─ {outlet_alias}:")
 
-         # Ajuster la scrollregion du canvas status après mise à jour
-         self.scrollable_status_frame.update_idletasks()
-         status_canvas = self.scrollable_status_frame.master
-         status_canvas.configure(scrollregion=status_canvas.bbox("all"))
+            # elif data['type'] == 'device':
+            #     # LIGNE SUPPRIMÉE/COMMENTÉE: Ne pas mettre à jour le nom de l'appareil ici
+            #     # ip = key
+            #     # device_alias = self.get_alias('device', ip)
+            #     # if data['label_name'].winfo_exists():
+            #     #     data['label_name'].config(text=f"{device_alias} ({ip}):")
+            #     pass # Rien à mettre à jour périodiquement pour le nom de l'appareil
 
+        # # Pas besoin d'ajuster la scrollregion ici car on ne change que le texte
+        # # self.scrollable_status_frame.update_idletasks()
+        # # status_canvas = self.scrollable_status_frame.master
+        # # status_canvas.configure(scrollregion=status_canvas.bbox("all"))
     def _get_shared_kasa_state(self, ip, index):
         """Récupère l'état Kasa depuis une structure partagée (à remplir par asyncio)."""
         # Ceci est un placeholder. La vraie donnée viendra de la boucle asyncio.
