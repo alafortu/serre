@@ -1,4 +1,7 @@
 python-kasa
 w1thermsensor
+smbus2 
 bh1750
-streamlit
+tk 
+PyYAML 
+asyncio 
