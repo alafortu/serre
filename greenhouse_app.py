@@ -761,6 +761,7 @@ class GreenhouseApp:
 
 
     # --- Affichage Statut ---
+    # --- Affichage Statut ---
     def update_status_display(self):
         """Crée ou met à jour les labels dans la section statut (basé sur MAC)."""
         logging.debug("Mise à jour de l'affichage du statut.")
@@ -771,97 +772,114 @@ class GreenhouseApp:
 
         row_num = 0
 
+        # --- Lire toutes les températures et lumières une fois AVANT la boucle ---
+        try:
+            # Récupère un dict {sensor_id: temp | None}
+            all_temp_readings = self.temp_manager.read_all_temperatures()
+        except Exception as e:
+            logging.error(f"Erreur lors de la lecture globale des températures : {e}")
+            all_temp_readings = {} # Retourne un dict vide en cas d'erreur
+        try:
+            # Récupère un dict {hex_addr: lux | None}
+            all_light_readings = self.light_manager.read_all_sensors()
+        except Exception as e:
+            logging.error(f"Erreur lors de la lecture globale des lumières : {e}")
+            all_light_readings = {} # Retourne un dict vide en cas d'erreur
+
+
         # --- Affichage Capteurs ---
         ttk.Label(self.scrollable_status_frame, text="Capteurs:", font=('Helvetica', 10, 'bold')).grid(row=row_num, column=0, columnspan=4, sticky='w', pady=(5, 2))
         row_num += 1
 
-        # Tri des capteurs par alias
+        # Tri des capteurs par alias pour un affichage cohérent
         sorted_sensors = sorted(self.available_sensors, key=lambda x: x[0])
 
-        #for alias, sensor_id in self.available_sensors:
+        # Boucle sur les capteurs connus par l'application
         for alias, sensor_id in sorted_sensors:
             value_text = "N/A"
             unit = ""
-            is_temp = sensor_id in self.temp_manager.get_sensor_ids()
-            is_light = sensor_id in [hex(a) for a in self.light_manager.get_active_sensors()]
+            # Vérifier si l'ID du capteur est présent dans les lectures récupérées
+            is_temp = sensor_id in all_temp_readings
+            is_light = sensor_id in all_light_readings
 
             if is_temp:
-                temp = self.temp_manager.read_temperature(sensor_id) # Lire individuellement ? Ou utiliser lecture groupée ?
+                # >>> CORRECTION ICI <<<
+                # Chercher la valeur dans le dictionnaire déjà lu
+                temp = all_temp_readings.get(sensor_id) # Utiliser .get() est plus sûr
+                # >>> FIN CORRECTION <<<
                 value_text = f"{temp:.1f}" if temp is not None else "Erreur/Non prêt"
                 unit = "°C"
             elif is_light:
-                lux = self.light_manager.read_sensor(int(sensor_id, 16)) # Convertir hex en int pour lecture
+                # >>> CORRECTION ICI <<<
+                # Chercher la valeur dans le dictionnaire déjà lu
+                lux = all_light_readings.get(sensor_id) # Utiliser .get() est plus sûr
+                # >>> FIN CORRECTION <<<
                 value_text = f"{lux:.1f}" if lux is not None else "Erreur/Non prêt"
                 unit = " Lux"
+            # Optionnel: Gérer le cas où un sensor_id de available_sensors n'est dans aucune lecture
+            # else:
+            #    logging.warning(f"Capteur {alias} ({sensor_id}) présent dans available_sensors mais pas dans les lectures récentes.")
+            #    value_text = "Lecture Manquante"
 
+            # Création des widgets (identique à avant)
             frame = ttk.Frame(self.scrollable_status_frame)
             frame.grid(row=row_num, column=0, columnspan=4, sticky='w')
-            name_label = ttk.Label(frame, text=f"{alias}:", width=25) # Largeur fixe pour alignement
+            name_label = ttk.Label(frame, text=f"{alias}:", width=25)
             name_label.pack(side=tk.LEFT, padx=5)
             value_label = ttk.Label(frame, text=f"{value_text}{unit}", width=15)
             value_label.pack(side=tk.LEFT, padx=5)
             edit_button = ttk.Button(frame, text="✎", width=2, command=lambda s_id=sensor_id, s_name=alias: self.edit_alias_dialog('sensor', s_id, s_name))
             edit_button.pack(side=tk.LEFT, padx=2)
 
-            # Clé = ID du capteur
             self.status_labels[sensor_id] = {'type': 'sensor', 'label_name': name_label, 'label_value': value_label, 'button_edit': edit_button}
             row_num += 1
 
-
-        # --- Affichage États Kasa (basé sur MAC) ---
+        # --- Affichage États Kasa (Reste inchangé) ---
         ttk.Label(self.scrollable_status_frame, text="Prises Kasa:", font=('Helvetica', 10, 'bold')).grid(row=row_num, column=0, columnspan=4, sticky='w', pady=(10, 2))
         row_num += 1
 
-        # Trier les appareils par alias
         sorted_macs = sorted(self.kasa_devices.keys(), key=lambda m: self.get_alias('device', m))
 
-        #for mac, data in self.kasa_devices.items():
         for mac in sorted_macs:
             data = self.kasa_devices[mac]
             device_alias = self.get_alias('device', mac)
             device_info = data['info']
-            ip_addr = data.get('ip', '?.?.?.?') # Récupérer l'IP stockée
+            ip_addr = data.get('ip', '?.?.?.?')
 
-            # Afficher le nom de l'appareil (barre/prise)
             frame_dev = ttk.Frame(self.scrollable_status_frame)
             frame_dev.grid(row=row_num, column=0, columnspan=4, sticky='w')
-            # Afficher Alias (IP) [MAC]
             dev_display_text = f"{device_alias} ({ip_addr}) [{mac}]"
             dev_name_label = ttk.Label(frame_dev, text=dev_display_text)
             dev_name_label.pack(side=tk.LEFT, padx=5)
             dev_edit_button = ttk.Button(frame_dev, text="✎", width=2, command=lambda d_mac=mac, d_name=device_alias: self.edit_alias_dialog('device', d_mac, d_name))
             dev_edit_button.pack(side=tk.LEFT, padx=2)
-            # Clé = MAC de l'appareil
             self.status_labels[mac] = {'type': 'device', 'label_name': dev_name_label, 'button_edit': dev_edit_button}
             row_num += 1
 
-            # Afficher les prises si elles existent (utilisant available_outlets basé sur MAC)
             if mac in self.available_outlets:
-                for outlet_alias, index in self.available_outlets[mac]: # Déjà trié par index
-                    # Trouver l'état actuel (depuis la découverte ou live_kasa_states)
+                for outlet_alias, index in self.available_outlets[mac]:
                     current_state = "Inconnu"
                     if mac in self.live_kasa_states and index in self.live_kasa_states[mac]:
                          current_state = "ON" if self.live_kasa_states[mac][index] else "OFF"
-                    elif 'outlets' in device_info: # Fallback sur l'info de découverte
+                    elif 'outlets' in device_info:
                         outlet_info = next((o for o in device_info['outlets'] if o.get('index') == index), None)
                         if outlet_info:
                              current_state = "ON" if outlet_info.get('is_on') else "OFF"
 
                     frame_outlet = ttk.Frame(self.scrollable_status_frame)
-                    frame_outlet.grid(row=row_num, column=1, columnspan=3, sticky='w', padx=(20,0)) # Indenter
-                    outlet_name_label = ttk.Label(frame_outlet, text=f"└─ {outlet_alias}:", width=23) # Largeur fixe
+                    frame_outlet.grid(row=row_num, column=1, columnspan=3, sticky='w', padx=(20,0))
+                    outlet_name_label = ttk.Label(frame_outlet, text=f"└─ {outlet_alias}:", width=23)
                     outlet_name_label.pack(side=tk.LEFT, padx=5)
                     outlet_value_label = ttk.Label(frame_outlet, text=current_state, width=10)
                     outlet_value_label.pack(side=tk.LEFT, padx=5)
                     outlet_edit_button = ttk.Button(frame_outlet, text="✎", width=2, command=lambda d_mac=mac, o_idx=index, o_name=outlet_alias: self.edit_alias_dialog('outlet', d_mac, o_name, sub_id=o_idx))
                     outlet_edit_button.pack(side=tk.LEFT, padx=2)
 
-                    # Clé composite : MAC_Index
                     outlet_key = f"{mac}_{index}"
                     self.status_labels[outlet_key] = {'type': 'outlet', 'mac': mac, 'index': index, 'label_name': outlet_name_label, 'label_value': outlet_value_label, 'button_edit': outlet_edit_button}
                     row_num += 1
 
-        # Ajuster la scrollregion
+        # Ajuster la scrollregion (inchangé)
         self.scrollable_status_frame.update_idletasks()
         status_canvas = self.scrollable_status_frame.master
         status_canvas.configure(scrollregion=status_canvas.bbox("all"))
