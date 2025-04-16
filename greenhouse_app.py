@@ -29,10 +29,21 @@ class GreenhouseApp:
         try:
             # Définir une taille initiale (Largeur x Hauteur)
             # Augmenter la largeur (par exemple à 1300) pour tout voir
-            self.root.geometry("1300x800")
+            self.root.geometry("1500x800")
         except tk.TclError as e:
              # Peut échouer sur certains systèmes/configurations Tcl/Tk, logguer l'erreur
              logging.warning(f"Impossible de définir la géométrie initiale: {e}")
+        
+        # --- Ajout du style pour le bouton Supprimer ---
+        style = ttk.Style(self.root)
+        # Définir une configuration pour un style nommé "Red.TButton"
+        # Vous pouvez ajuster la police, la couleur, etc.
+        style.configure("Red.TButton", foreground="red", background="white", font=('Helvetica', 10))
+        # Optionnel: Définir un mapping pour changer l'apparence quand cliqué/actif
+        style.map("Red.TButton",
+                  foreground=[('pressed', 'white'), ('active', 'white')],
+                  background=[('pressed', 'darkred'), ('active', 'red')])
+        # --- Fin ajout style ---
 
         # --- Initialisation Backend ---
         self.log_queue = queue.Queue()
@@ -262,84 +273,100 @@ class GreenhouseApp:
     # --- Gestion Règles UI ---
     # --- Gestion Règles UI ---
     def add_rule_ui(self, rule_data=None):
-        """Ajoute une ligne de règle à l'interface utilisateur."""
+        """Ajoute une ligne de règle à l'interface utilisateur (sur deux lignes)."""
         rule_id = rule_data.get('id', str(uuid.uuid4())) if rule_data else str(uuid.uuid4())
         if not rule_data: # Nouvelle règle
             rule_data = {'id': rule_id}
             self.rules.append(rule_data)
         elif not any(r.get('id') == rule_id for r in self.rules):
              # Règle chargée, s'assurer qu'elle est dans la liste
-            self.rules.append(rule_data) # Normalement déjà fait au load_config
+            self.rules.append(rule_data)
 
+        # --- Cadre principal pour la règle (avec bordure) ---
         rule_frame = ttk.Frame(self.scrollable_rules_frame, padding="5", borderwidth=1, relief="groove")
         rule_frame.pack(fill=tk.X, pady=2, padx=2)
 
-        widgets = {}
+        # --- Cadre pour la première ligne (SI, ALORS, Supprimer) ---
+        top_frame = ttk.Frame(rule_frame)
+        top_frame.pack(side=tk.TOP, fill=tk.X, expand=True, pady=(0, 3)) # Petit espace en bas
 
-        # --- Condition "SI" ---
-        ttk.Label(rule_frame, text="SI").pack(side=tk.LEFT, padx=2)
+        # --- Cadre pour la deuxième ligne (JUSQU'À) ---
+        bottom_frame = ttk.Frame(rule_frame)
+        # Appliquer une indentation à gauche pour cette ligne
+        bottom_frame.pack(side=tk.TOP, fill=tk.X, expand=True, padx=(30, 0)) # 30px d'indentation à gauche
+
+        widgets = {} # Dictionnaire pour stocker les widgets de contrôle
+
+        # --- Condition "SI" (dans top_frame) ---
+        ttk.Label(top_frame, text="SI").pack(side=tk.LEFT, padx=2)
         widgets['sensor_var'] = tk.StringVar()
-        widgets['sensor_combo'] = ttk.Combobox(rule_frame, textvariable=widgets['sensor_var'], width=20, state="readonly")
-        # +++ Peupler les valeurs initiales pour les nouvelles règles +++
+        widgets['sensor_combo'] = ttk.Combobox(top_frame, textvariable=widgets['sensor_var'], width=20, state="readonly")
         widgets['sensor_combo']['values'] = [name for name, _id in self.available_sensors]
-        # +++ Fin Peuplement +++
         widgets['sensor_combo'].pack(side=tk.LEFT, padx=2)
         widgets['sensor_combo'].bind('<<ComboboxSelected>>', lambda e, rid=rule_id: self.on_rule_change(rid))
 
         widgets['operator_var'] = tk.StringVar()
-        widgets['operator_combo'] = ttk.Combobox(rule_frame, textvariable=widgets['operator_var'], values=OPERATORS, width=4, state="readonly")
+        widgets['operator_combo'] = ttk.Combobox(top_frame, textvariable=widgets['operator_var'], values=OPERATORS, width=4, state="readonly")
         widgets['operator_combo'].pack(side=tk.LEFT, padx=2)
         widgets['operator_combo'].bind('<<ComboboxSelected>>', lambda e, rid=rule_id: self.on_rule_change(rid))
 
         widgets['value_var'] = tk.StringVar()
-        widgets['value_entry'] = ttk.Entry(rule_frame, textvariable=widgets['value_var'], width=8) # Largeur augmentée pour décimales
+        widgets['value_entry'] = ttk.Entry(top_frame, textvariable=widgets['value_var'], width=8)
         widgets['value_entry'].pack(side=tk.LEFT, padx=2)
         widgets['value_entry'].bind('<KeyRelease>', lambda e, rid=rule_id: self.on_rule_change(rid))
 
-        # --- Action "ALORS" ---
-        ttk.Label(rule_frame, text="ALORS").pack(side=tk.LEFT, padx=(10, 2))
+        # --- Action "ALORS" (dans top_frame) ---
+        ttk.Label(top_frame, text="ALORS").pack(side=tk.LEFT, padx=(10, 2))
         widgets['kasa_var'] = tk.StringVar()
-        widgets['kasa_combo'] = ttk.Combobox(rule_frame, textvariable=widgets['kasa_var'], width=25, state="readonly") # Largeur ajustée
-        # +++ Peupler les valeurs initiales pour les nouvelles règles +++
+        widgets['kasa_combo'] = ttk.Combobox(top_frame, textvariable=widgets['kasa_var'], width=25, state="readonly")
         widgets['kasa_combo']['values'] = [name for name, _mac in self.available_kasa_strips]
-         # +++ Fin Peuplement +++
         widgets['kasa_combo'].pack(side=tk.LEFT, padx=2)
         widgets['kasa_combo'].bind('<<ComboboxSelected>>', lambda e, rid=rule_id: self.update_outlet_options(rid))
 
         widgets['outlet_var'] = tk.StringVar()
-        widgets['outlet_combo'] = ttk.Combobox(rule_frame, textvariable=widgets['outlet_var'], width=20, state="readonly") # Largeur ajustée
-        # Les valeurs des prises sont définies par update_outlet_options APRES sélection Kasa
-        widgets['outlet_combo']['values'] = [] # Initialement vide pour une nouvelle règle
+        widgets['outlet_combo'] = ttk.Combobox(top_frame, textvariable=widgets['outlet_var'], width=20, state="readonly")
+        widgets['outlet_combo']['values'] = [] # Initialement vide
         widgets['outlet_combo'].pack(side=tk.LEFT, padx=2)
         widgets['outlet_combo'].bind('<<ComboboxSelected>>', lambda e, rid=rule_id: self.on_rule_change(rid))
 
         widgets['action_var'] = tk.StringVar()
-        widgets['action_combo'] = ttk.Combobox(rule_frame, textvariable=widgets['action_var'], values=ACTIONS, width=5, state="readonly")
+        widgets['action_combo'] = ttk.Combobox(top_frame, textvariable=widgets['action_var'], values=ACTIONS, width=5, state="readonly")
         widgets['action_combo'].pack(side=tk.LEFT, padx=2)
         widgets['action_combo'].bind('<<ComboboxSelected>>', lambda e, rid=rule_id: self.on_rule_change(rid))
 
-        # --- Condition "JUSQU'À" (Optionnel) ---
-        ttk.Label(rule_frame, text="JUSQU'À").pack(side=tk.LEFT, padx=(10, 2))
+        # --- Bouton Supprimer (dans top_frame, à droite) ---
+        # Utilise le style "Red.TButton" défini dans __init__
+        delete_button = ttk.Button(top_frame, text="❌", width=3, style="Red.TButton",
+                                   command=lambda rid=rule_id: self.delete_rule(rid))
+        delete_button.pack(side=tk.RIGHT, padx=5) # Pack à droite de top_frame
+
+        # --- Condition "JUSQU'À" (dans bottom_frame) ---
+        # Ajout d'un symbole pour indiquer la continuation
+        ttk.Label(bottom_frame, text="↳").pack(side=tk.LEFT, padx=(0, 5)) # Flèche + espace
+        ttk.Label(bottom_frame, text="JUSQU'À").pack(side=tk.LEFT, padx=2)
         widgets['until_type_var'] = tk.StringVar()
-        widgets['until_type_combo'] = ttk.Combobox(rule_frame, textvariable=widgets['until_type_var'], values=UNTIL_TYPES, width=15, state="readonly")
+        widgets['until_type_combo'] = ttk.Combobox(bottom_frame, textvariable=widgets['until_type_var'], values=UNTIL_TYPES, width=15, state="readonly")
+        widgets['until_type_combo']['values'] = UNTIL_TYPES # Assurer que les valeurs sont là
         widgets['until_type_combo'].pack(side=tk.LEFT, padx=2)
         widgets['until_type_combo'].bind('<<ComboboxSelected>>', lambda e, rid=rule_id: self.toggle_until_fields(rid))
 
-        # Champs pour 'Timer'
-        widgets['until_timer_frame'] = ttk.Frame(rule_frame)
+        # --- Champs pour 'Timer' (attachés à bottom_frame) ---
+        widgets['until_timer_frame'] = ttk.Frame(bottom_frame) # Parent = bottom_frame
+        # Widgets à l'intérieur de until_timer_frame
         widgets['until_timer_value_var'] = tk.StringVar()
         widgets['until_timer_value_entry'] = ttk.Entry(widgets['until_timer_frame'], textvariable=widgets['until_timer_value_var'], width=6)
         widgets['until_timer_value_entry'].pack(side=tk.LEFT)
         widgets['until_timer_value_entry'].bind('<KeyRelease>', lambda e, rid=rule_id: self.on_rule_change(rid))
         ttk.Label(widgets['until_timer_frame'], text="secs").pack(side=tk.LEFT, padx=1)
+        # Empaqueter le *cadre* du timer dans bottom_frame
+        widgets['until_timer_frame'].pack(side=tk.LEFT, padx=2)
 
-        # Champs pour 'Capteur'
-        widgets['until_sensor_frame'] = ttk.Frame(rule_frame)
+        # --- Champs pour 'Capteur' (attachés à bottom_frame) ---
+        widgets['until_sensor_frame'] = ttk.Frame(bottom_frame) # Parent = bottom_frame
+         # Widgets à l'intérieur de until_sensor_frame
         widgets['until_sensor_var'] = tk.StringVar()
         widgets['until_sensor_combo'] = ttk.Combobox(widgets['until_sensor_frame'], textvariable=widgets['until_sensor_var'], width=20, state="readonly")
-        # +++ Peupler les valeurs initiales pour les nouvelles règles +++
         widgets['until_sensor_combo']['values'] = [name for name, _id in self.available_sensors]
-        # +++ Fin Peuplement +++
         widgets['until_sensor_combo'].pack(side=tk.LEFT, padx=2)
         widgets['until_sensor_combo'].bind('<<ComboboxSelected>>', lambda e, rid=rule_id: self.on_rule_change(rid))
 
@@ -349,37 +376,29 @@ class GreenhouseApp:
         widgets['until_operator_combo'].bind('<<ComboboxSelected>>', lambda e, rid=rule_id: self.on_rule_change(rid))
 
         widgets['until_sensor_value_var'] = tk.StringVar()
-        widgets['until_sensor_value_entry'] = ttk.Entry(widgets['until_sensor_frame'], textvariable=widgets['until_sensor_value_var'], width=8) # Largeur augmentée
+        widgets['until_sensor_value_entry'] = ttk.Entry(widgets['until_sensor_frame'], textvariable=widgets['until_sensor_value_var'], width=8)
         widgets['until_sensor_value_entry'].pack(side=tk.LEFT, padx=2)
         widgets['until_sensor_value_entry'].bind('<KeyRelease>', lambda e, rid=rule_id: self.on_rule_change(rid))
-
-        # Empaqueter les frames 'until' (mais ne pas les afficher encore)
-        widgets['until_timer_frame'].pack(side=tk.LEFT, padx=2)
+         # Empaqueter le *cadre* du capteur dans bottom_frame
         widgets['until_sensor_frame'].pack(side=tk.LEFT, padx=2)
+
+        # Cacher les cadres 'until' par défaut comme avant
         widgets['until_timer_frame'].pack_forget()
         widgets['until_sensor_frame'].pack_forget()
 
-        # Bouton Supprimer
-        delete_button = ttk.Button(rule_frame, text="🗑️", width=3, command=lambda rid=rule_id: self.delete_rule(rid))
-        delete_button.pack(side=tk.RIGHT, padx=5)
-
-        # Stocker les widgets
+        # --- Stockage et finalisation ---
         self.rule_widgets[rule_id] = {'frame': rule_frame, 'widgets': widgets}
 
-        # Peupler les widgets si des données existent (chargement)
         if rule_data and rule_id in self.rule_widgets:
             self._populate_rule_ui_from_data(rule_id, rule_data)
-            # Le peuplement fin des dropdowns se fera via repopulate_all_rule_dropdowns après découverte
+            # Le peuplement fin se fera via repopulate... après découverte
 
-        # Mettre à jour la barre de défilement
-        # Peut être nécessaire de faire un update_idletasks avant pour que bbox soit correct
         self.scrollable_rules_frame.update_idletasks()
         self.rules_canvas.configure(scrollregion=self.rules_canvas.bbox("all"))
 
-        # Si c'est une nouvelle règle, s'assurer que les champs 'until' sont bien cachés par défaut
         if not rule_data:
-             widgets['until_type_var'].set('Aucun') # Mettre la valeur par défaut
-             self.toggle_until_fields(rule_id) # Appeler pour cacher les champs
+             widgets['until_type_var'].set('Aucun')
+             self.toggle_until_fields(rule_id) # Assure que les cadres sont cachés
 
     def _populate_rule_ui_from_data(self, rule_id, rule_data):
         """Remplit les widgets d'une règle avec les données chargées (pré-découverte)."""
@@ -1498,17 +1517,33 @@ class GreenhouseApp:
 
 
     def on_closing(self):
-        """Gère la fermeture de l'application."""
+        """Gère la fermeture de l'application et éteint les prises."""
         if self.monitoring_active:
             if messagebox.askyesno("Quitter", "Le monitoring est actif. Voulez-vous l'arrêter et quitter ?", parent=self.root):
+                logging.info("Arrêt du monitoring et fermeture demandés...")
+                # stop_monitoring appelle déjà _turn_off_all_kasa_safely
                 self.stop_monitoring()
-                # Donner un peu de temps pour l'extinction avant de détruire
-                self.root.after(1000, self.root.destroy) # Attendre 1 sec
+                # Donner un peu de temps pour que stop_monitoring (incluant l'extinction) s'exécute
+                # Augmenter légèrement le délai peut aider si l'extinction prend du temps
+                logging.info("Fermeture de l'application dans 1.5 secondes...")
+                self.root.after(1500, self.root.destroy)
             else:
-                return # Ne pas quitter
+                # L'utilisateur a choisi "Non", ne pas quitter
+                return
         else:
+            # Le monitoring n'est PAS actif
             if messagebox.askyesno("Quitter", "Êtes-vous sûr de vouloir quitter ?", parent=self.root):
-                self.root.destroy()
+                logging.info("Fermeture demandée (monitoring inactif).")
+                # --- AJOUT : Éteindre les prises même si le monitoring était inactif ---
+                logging.info("Tentative d'extinction des prises Kasa par sécurité avant de quitter...")
+                # Exécuter dans un thread pour ne pas bloquer la fermeture de l'UI
+                threading.Thread(target=self._turn_off_all_kasa_safely, daemon=True).start()
+                # --- FIN AJOUT ---
+                # Donner un peu de temps au thread d'extinction pour démarrer et envoyer les commandes
+                logging.info("Fermeture de l'application dans 1 seconde...")
+                self.root.after(1000, self.root.destroy)
+            # else: # L'utilisateur a choisi "Non", ne pas quitter
+            #    return
 
 
 if __name__ == "__main__":
