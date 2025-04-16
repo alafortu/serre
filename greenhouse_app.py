@@ -254,6 +254,7 @@ class GreenhouseApp:
 
 
     # --- Gestion Règles UI ---
+    # --- Gestion Règles UI ---
     def add_rule_ui(self, rule_data=None):
         """Ajoute une ligne de règle à l'interface utilisateur."""
         rule_id = rule_data.get('id', str(uuid.uuid4())) if rule_data else str(uuid.uuid4())
@@ -273,7 +274,9 @@ class GreenhouseApp:
         ttk.Label(rule_frame, text="SI").pack(side=tk.LEFT, padx=2)
         widgets['sensor_var'] = tk.StringVar()
         widgets['sensor_combo'] = ttk.Combobox(rule_frame, textvariable=widgets['sensor_var'], width=20, state="readonly")
-        # Les valeurs seront définies par repopulate_all_rule_dropdowns
+        # +++ Peupler les valeurs initiales pour les nouvelles règles +++
+        widgets['sensor_combo']['values'] = [name for name, _id in self.available_sensors]
+        # +++ Fin Peuplement +++
         widgets['sensor_combo'].pack(side=tk.LEFT, padx=2)
         widgets['sensor_combo'].bind('<<ComboboxSelected>>', lambda e, rid=rule_id: self.on_rule_change(rid))
 
@@ -291,14 +294,16 @@ class GreenhouseApp:
         ttk.Label(rule_frame, text="ALORS").pack(side=tk.LEFT, padx=(10, 2))
         widgets['kasa_var'] = tk.StringVar()
         widgets['kasa_combo'] = ttk.Combobox(rule_frame, textvariable=widgets['kasa_var'], width=25, state="readonly") # Largeur ajustée
-        # Les valeurs (alias) seront définies par repopulate_all_rule_dropdowns
+        # +++ Peupler les valeurs initiales pour les nouvelles règles +++
+        widgets['kasa_combo']['values'] = [name for name, _mac in self.available_kasa_strips]
+         # +++ Fin Peuplement +++
         widgets['kasa_combo'].pack(side=tk.LEFT, padx=2)
-        # La sélection met à jour les options de prise ET met à jour la règle interne
         widgets['kasa_combo'].bind('<<ComboboxSelected>>', lambda e, rid=rule_id: self.update_outlet_options(rid))
 
         widgets['outlet_var'] = tk.StringVar()
         widgets['outlet_combo'] = ttk.Combobox(rule_frame, textvariable=widgets['outlet_var'], width=20, state="readonly") # Largeur ajustée
-        # Les valeurs (alias prises) sont définies par update_outlet_options
+        # Les valeurs des prises sont définies par update_outlet_options APRES sélection Kasa
+        widgets['outlet_combo']['values'] = [] # Initialement vide pour une nouvelle règle
         widgets['outlet_combo'].pack(side=tk.LEFT, padx=2)
         widgets['outlet_combo'].bind('<<ComboboxSelected>>', lambda e, rid=rule_id: self.on_rule_change(rid))
 
@@ -326,7 +331,9 @@ class GreenhouseApp:
         widgets['until_sensor_frame'] = ttk.Frame(rule_frame)
         widgets['until_sensor_var'] = tk.StringVar()
         widgets['until_sensor_combo'] = ttk.Combobox(widgets['until_sensor_frame'], textvariable=widgets['until_sensor_var'], width=20, state="readonly")
-        # Les valeurs seront définies par repopulate_all_rule_dropdowns
+        # +++ Peupler les valeurs initiales pour les nouvelles règles +++
+        widgets['until_sensor_combo']['values'] = [name for name, _id in self.available_sensors]
+        # +++ Fin Peuplement +++
         widgets['until_sensor_combo'].pack(side=tk.LEFT, padx=2)
         widgets['until_sensor_combo'].bind('<<ComboboxSelected>>', lambda e, rid=rule_id: self.on_rule_change(rid))
 
@@ -354,15 +361,20 @@ class GreenhouseApp:
         self.rule_widgets[rule_id] = {'frame': rule_frame, 'widgets': widgets}
 
         # Peupler les widgets si des données existent (chargement)
-        # Le peuplement fin des dropdowns se fera via repopulate_all_rule_dropdowns
         if rule_data and rule_id in self.rule_widgets:
             self._populate_rule_ui_from_data(rule_id, rule_data)
-            # Note: Les combos Kasa/Outlet ne seront peut-être pas corrects ici
-            # car la découverte n'a pas encore eu lieu. `repopulate...` corrigera.
+            # Le peuplement fin des dropdowns se fera via repopulate_all_rule_dropdowns après découverte
 
         # Mettre à jour la barre de défilement
+        # Peut être nécessaire de faire un update_idletasks avant pour que bbox soit correct
+        self.scrollable_rules_frame.update_idletasks()
         self.rules_canvas.configure(scrollregion=self.rules_canvas.bbox("all"))
 
+        # Si c'est une nouvelle règle, s'assurer que les champs 'until' sont bien cachés par défaut
+        if not rule_data:
+             widgets['until_type_var'].set('Aucun') # Mettre la valeur par défaut
+             self.toggle_until_fields(rule_id) # Appeler pour cacher les champs
+             
     def _populate_rule_ui_from_data(self, rule_id, rule_data):
         """Remplit les widgets d'une règle avec les données chargées (pré-découverte)."""
         if rule_id not in self.rule_widgets: return
