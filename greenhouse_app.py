@@ -26,7 +26,13 @@ class GreenhouseApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Gestionnaire de Serre")
-        # self.root.geometry("1000x800") # Ajuster si nécessaire
+        try:
+            # Définir une taille initiale (Largeur x Hauteur)
+            # Augmenter la largeur (par exemple à 1300) pour tout voir
+            self.root.geometry("1300x800")
+        except tk.TclError as e:
+             # Peut échouer sur certains systèmes/configurations Tcl/Tk, logguer l'erreur
+             logging.warning(f"Impossible de définir la géométrie initiale: {e}")
 
         # --- Initialisation Backend ---
         self.log_queue = queue.Queue()
@@ -374,7 +380,7 @@ class GreenhouseApp:
         if not rule_data:
              widgets['until_type_var'].set('Aucun') # Mettre la valeur par défaut
              self.toggle_until_fields(rule_id) # Appeler pour cacher les champs
-             
+
     def _populate_rule_ui_from_data(self, rule_id, rule_data):
         """Remplit les widgets d'une règle avec les données chargées (pré-découverte)."""
         if rule_id not in self.rule_widgets: return
