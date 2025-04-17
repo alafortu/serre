@@ -286,53 +286,84 @@ class GreenhouseApp:
 
     # --- Création Widgets (Structure générale similaire) ---
     def create_widgets(self):
-        # ... (Identique à la v2, utilise LabelFrame pour règles, etc.) ...
+        """Crée tous les widgets principaux de l'interface utilisateur."""
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
+        # --- Cadre des Règles (Haut) ---
+        # Utilise un LabelFrame stylisé
         rules_frame_container = ttk.LabelFrame(main_frame, text="Règles d'Automatisation", padding="10")
         rules_frame_container.pack(fill=tk.X, expand=False, pady=5)
 
-        self.rules_canvas = tk.Canvas(rules_frame_container)
+        # Canvas et Scrollbar pour les règles
+        self.rules_canvas = tk.Canvas(rules_frame_container, borderwidth=0, background="#FFFFFF") # Fond blanc pour le canvas
         scrollbar = ttk.Scrollbar(rules_frame_container, orient="vertical", command=self.rules_canvas.yview)
-        self.scrollable_rules_frame = ttk.Frame(self.rules_canvas)
+        self.scrollable_rules_frame = ttk.Frame(self.rules_canvas) # Frame à l'intérieur du canvas
         self.scrollable_rules_frame.bind("<Configure>", lambda e: self.rules_canvas.configure(scrollregion=self.rules_canvas.bbox("all")))
+
         self.rules_canvas.create_window((0, 0), window=self.scrollable_rules_frame, anchor="nw")
         self.rules_canvas.configure(yscrollcommand=scrollbar.set)
+
         self.rules_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.rules_canvas.config(height=350)
+        self.rules_canvas.config(height=350) # Hauteur initiale pour le canvas des règles
 
+        # Bouton Ajouter Règle (placé sous le cadre des règles)
         add_rule_button = ttk.Button(main_frame, text="➕ Ajouter une Règle", command=self.add_rule_ui)
         add_rule_button.pack(pady=5)
 
+        # --- Cadre des Contrôles (Milieu) ---
         control_frame = ttk.Frame(main_frame, padding="10")
         control_frame.pack(fill=tk.X, expand=False, pady=5)
+
         self.start_button = ttk.Button(control_frame, text="🟢 Gérer ma Serre", command=self.start_monitoring)
         self.start_button.pack(side=tk.LEFT, padx=5)
+
         self.stop_button = ttk.Button(control_frame, text="🔴 Arrêter", command=self.stop_monitoring, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, padx=5)
+
         save_button = ttk.Button(control_frame, text="💾 Sauvegarder Configuration", command=self.save_configuration)
         save_button.pack(side=tk.RIGHT, padx=5)
 
+
+        # --- Cadre Statut et Logs (Bas) ---
         status_log_frame = ttk.Frame(main_frame, padding="10")
         status_log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-        status_frame = ttk.LabelFrame(status_log_frame, text="Statut Actuel", padding="10")
-        status_frame.pack(fill=tk.BOTH, expand=True, side=tk.LEFT, padx=5, minsize=(400, 0))
 
-        status_canvas = tk.Canvas(status_frame)
+        # --- Configuration de la grille pour status_log_frame ---
+        # La colonne 0 (status) aura un poids de 1 et une taille minimale de 400
+        status_log_frame.columnconfigure(0, weight=1, minsize=400)
+        # La colonne 1 (log) aura un poids de 1 (partage l'espace restant)
+        status_log_frame.columnconfigure(1, weight=1)
+        # La rangée 0 prendra toute la hauteur disponible
+        status_log_frame.rowconfigure(0, weight=1)
+
+        # --- Section Statut ---
+        status_frame = ttk.LabelFrame(status_log_frame, text="Statut Actuel", padding="10")
+        # Utiliser grid() au lieu de pack()
+        status_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5), pady=0) # nsew = fill BOTH
+
+        # Canvas et Scrollbar pour le statut (placés DANS status_frame, leur géométrie interne ne change pas)
+        # Mettre un fond au canvas pour voir sa zone
+        status_canvas = tk.Canvas(status_frame, borderwidth=0, background="#F0F0F0")
         status_scrollbar = ttk.Scrollbar(status_frame, orient="vertical", command=status_canvas.yview)
-        self.scrollable_status_frame = ttk.Frame(status_canvas)
+        self.scrollable_status_frame = ttk.Frame(status_canvas) # Le frame qui contient les labels de statut
         self.scrollable_status_frame.bind("<Configure>", lambda e: status_canvas.configure(scrollregion=status_canvas.bbox("all")))
+
         status_canvas.create_window((0, 0), window=self.scrollable_status_frame, anchor="nw")
         status_canvas.configure(yscrollcommand=status_scrollbar.set)
+        # Pack le canvas et la scrollbar pour qu'ils remplissent le status_frame
         status_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         status_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.status_labels = {}
+        self.status_labels = {} # Réinitialisé dans update_status_display
 
+        # --- Section Logs ---
         log_frame = ttk.LabelFrame(status_log_frame, text="Journal d'Événements", padding="10")
-        log_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT, padx=5)
+        # Utiliser grid() au lieu de pack()
+        log_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0), pady=0) # nsew = fill BOTH
+
         self.log_display = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, state=tk.DISABLED, height=15)
+        # Pack le widget de log pour qu'il remplisse le log_frame
         self.log_display.pack(fill=tk.BOTH, expand=True)
 
     # --- Peuplement Initial UI ---
