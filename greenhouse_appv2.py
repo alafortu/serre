@@ -537,12 +537,15 @@ class GreenhouseApp:
         style = "AndGroup.TFrame" if logic == 'ET' else "OrGroup.TFrame"
 
         group_frame = ttk.Frame(parent_widget, padding=5, style=style)
-        group_frame.pack(fill=tk.X, expand=True, pady=3, padx=(indent_level * 15, 5))
+        group_frame.pack(fill=tk.X, expand=True, pady=3, padx=(indent_level * 15, 5)) # Applique l'indentation ici
+        # --- Stocker les références ---
         group_frame.logic_data_ref = group_data
         group_frame.rule_id = rule_id
         group_frame.block_key = block_key
         group_frame.is_root = is_root
+        group_frame.indent_level = indent_level # <-- Stocker le niveau d'indentation
 
+        # --- Toolbar ---
         toolbar = ttk.Frame(group_frame)
         toolbar.pack(fill=tk.X)
 
@@ -550,7 +553,7 @@ class GreenhouseApp:
         logic_label = ttk.Label(toolbar, text=logic_label_text, relief="raised", padding=(5, 1))
         logic_label.pack(side=tk.LEFT, padx=5)
 
-        # Bouton pour changer ET/OU (toujours dispo, même pour racine, pour changer le défaut)
+        # Bouton pour changer ET/OU
         switch_logic_button = ttk.Button(toolbar, text="🔄", style="Small.TButton", width=3,
                                          command=lambda g_frame=group_frame, g_data=group_data: self._switch_logic_clicked(g_frame, g_data))
         switch_logic_button.pack(side=tk.LEFT, padx=(0,5))
@@ -574,41 +577,46 @@ class GreenhouseApp:
                                        command=lambda g_frame=group_frame: self._delete_condition_or_group_clicked(g_frame))
             delete_button.pack(side=tk.RIGHT, padx=5)
 
-        # Conteneur pour les conditions/sous-groupes internes
+        # --- Conteneur pour les conditions/sous-groupes internes ---
         conditions_container = ttk.Frame(group_frame, padding=(0, 5, 0, 0))
         conditions_container.pack(fill=tk.X, expand=True)
-        group_frame.conditions_container = conditions_container
+        group_frame.conditions_container = conditions_container # Référence pour ajouter dedans
 
         # Créer récursivement l'UI pour les éléments internes
         conditions_list = group_data.get('conditions', [])
         for item_data in conditions_list:
             if isinstance(item_data, dict): # Vérifier que c'est bien un dict
-                 if 'logic' in item_data:
+                 if 'logic' in item_data: # C'est un sous-groupe
                      self._create_logic_group_ui(conditions_container, item_data, rule_id, block_key, is_root=False, indent_level=indent_level + 1)
-                 else:
+                 else: # C'est une condition simple
                      self._create_condition_ui(conditions_container, item_data, rule_id, block_key, indent_level=indent_level + 1)
             else:
                  logging.warning(f"Item invalide dans la liste de conditions pour {rule_id}/{block_key}: {item_data}")
 
-
     def _create_condition_ui(self, parent_widget, condition_data, rule_id, block_key, indent_level=0):
         """Crée l'UI pour une condition simple (Capteur, Heure, Timer)."""
         condition_frame = ttk.Frame(parent_widget, padding=5, style="Condition.TFrame")
-        condition_frame.pack(fill=tk.X, expand=True, pady=2, padx=(indent_level * 15, 5))
+        condition_frame.pack(fill=tk.X, expand=True, pady=2, padx=(indent_level * 15, 5)) # Applique l'indentation ici
+        # --- Stocker les références ---
         condition_frame.condition_data_ref = condition_data
         condition_frame.rule_id = rule_id
         condition_frame.block_key = block_key
+        condition_frame.indent_level = indent_level # <-- Stocker le niveau d'indentation
 
-        condition_type = condition_data.get('type', 'Capteur')
+        condition_type = condition_data.get('type', 'Capteur') # Défaut Capteur
 
+        # --- Toolbar pour Type et Suppression ---
         toolbar = ttk.Frame(condition_frame)
         toolbar.pack(fill=tk.X)
 
         ttk.Label(toolbar, text="Type:").pack(side=tk.LEFT, padx=(0, 2))
         type_var = tk.StringVar(value=condition_type)
         # Filtrer 'Timer' pour le bloc SI ? Pour l'instant on le laisse partout.
-        type_combo = ttk.Combobox(toolbar, textvariable=type_var, values=CONDITION_TYPES, width=8, state="readonly")
+        # Si vous voulez le filtrer: values = [t for t in CONDITION_TYPES if t != 'Timer'] if block_key == 'trigger_conditions' else CONDITION_TYPES
+        values_for_combo = CONDITION_TYPES
+        type_combo = ttk.Combobox(toolbar, textvariable=type_var, values=values_for_combo, width=8, state="readonly")
         type_combo.pack(side=tk.LEFT, padx=2)
+        # Le changement de type doit recréer les widgets spécifiques ci-dessous
         type_combo.bind('<<ComboboxSelected>>', lambda e, c_frame=condition_frame, c_data=condition_data, t_var=type_var: \
                         self._condition_type_changed(c_frame, c_data, t_var.get()))
 
@@ -617,15 +625,13 @@ class GreenhouseApp:
                                    command=lambda c_frame=condition_frame: self._delete_condition_or_group_clicked(c_frame))
         delete_button.pack(side=tk.RIGHT, padx=5)
 
-        # Conteneur pour les widgets spécifiques au type
+        # --- Conteneur pour les widgets spécifiques au type ---
+        # On met un frame pour pouvoir le vider et le remplir facilement
         specific_widgets_frame = ttk.Frame(condition_frame)
         specific_widgets_frame.pack(fill=tk.X, pady=3)
-        condition_frame.specific_widgets_frame = specific_widgets_frame
+        condition_frame.specific_widgets_frame = specific_widgets_frame # Sauver référence
 
-        # Action toolbar (vide maintenant, les boutons Add sont sur le parent)
-        # action_toolbar = ttk.Frame(condition_frame)
-        # action_toolbar.pack(fill=tk.X, pady=(5,0))
-
+        # Peupler les widgets spécifiques initialement
         self._populate_specific_condition_widgets(condition_frame, condition_data, condition_type)
 
 
@@ -900,39 +906,71 @@ class GreenhouseApp:
 
 
     def _add_condition_or_group_clicked(self, parent_conditions_frame, parent_group_data, rule_id, block_key, item_type):
-         logging.debug(f"Ajout '{item_type}' demandé dans {parent_group_data}")
-         if 'conditions' not in parent_group_data: parent_group_data['conditions'] = []
+        """Ajoute une nouvelle condition ou un nouveau groupe logique."""
+        logging.debug(f"Ajout '{item_type}' demandé dans parent UI {parent_conditions_frame} / parent data id {id(parent_group_data)}")
+        # S'assurer que parent_group_data est un dict et a 'conditions'
+        if not isinstance(parent_group_data, dict):
+             logging.error(f"Erreur ajout: parent_group_data n'est pas un dict valide pour règle {rule_id}/{block_key}")
+             return
+        if 'conditions' not in parent_group_data or not isinstance(parent_group_data['conditions'], list):
+             parent_group_data['conditions'] = [] # Initialiser/Réinitialiser si nécessaire
 
-         new_item_data = None
-         if item_type == 'condition':
-             new_item_data = {'type': 'Capteur', 'operator': '>', 'value': 0.0}
-         elif item_type == 'group_and':
-             new_item_data = {'logic': 'ET', 'conditions': []}
-         elif item_type == 'group_or':
-             new_item_data = {'logic': 'OU', 'conditions': []}
+        new_item_data = None
+        if item_type == 'condition':
+            # Valeurs par défaut pour une nouvelle condition
+            new_item_data = {'type': 'Capteur', 'operator': '>', 'value': 0.0, 'id': None}
+        elif item_type == 'group_and':
+            new_item_data = {'logic': 'ET', 'conditions': []}
+        elif item_type == 'group_or':
+            new_item_data = {'logic': 'OU', 'conditions': []}
 
-         if new_item_data:
-             parent_group_data['conditions'].append(new_item_data)
-             ui_container = getattr(parent_conditions_frame, 'conditions_container', parent_conditions_frame)
-             parent_padx = parent_conditions_frame.cget('padx')
-             indent_level = 0
-             try:
-                  if isinstance(parent_padx, tuple): indent_level = parent_padx[0] // 15
-                  elif isinstance(parent_padx, str) and parent_padx.endswith('p'): indent_level = int(parent_padx[:-1]) // 15
-             except: pass
+        if new_item_data:
+            # Ajouter les nouvelles données à la liste 'conditions' du parent
+            parent_group_data['conditions'].append(new_item_data)
+            logging.debug(f"Nouvelles données ajoutées à parent data id {id(parent_group_data)}: {new_item_data}")
 
-             # Ajouter 1 niveau d'indentation car on ajoute DANS ce groupe parent
-             new_indent_level = indent_level + 1
+            # Trouver le conteneur UI où ajouter le nouvel élément graphique
+            # Le parent_conditions_frame est le cadre du groupe logique parent.
+            # Il devrait avoir une référence à son 'conditions_container'
+            ui_container = getattr(parent_conditions_frame, 'conditions_container', parent_conditions_frame)
+            if not ui_container:
+                 logging.error(f"Impossible de trouver le conteneur UI pour ajouter dans {parent_conditions_frame}")
+                 # Tenter de retirer les données ajoutées? Complexe. Mieux vaut logger l'erreur.
+                 return
 
-             if 'logic' in new_item_data:
-                 self._create_logic_group_ui(ui_container, new_item_data, rule_id, block_key, is_root=False, indent_level=new_indent_level)
-             else:
-                 self._create_condition_ui(ui_container, new_item_data, rule_id, block_key, indent_level=new_indent_level)
+            # --- Calcul de l'indentation ---
+            # Récupérer le niveau d'indentation du parent depuis l'attribut stocké
+            parent_indent_level = getattr(parent_conditions_frame, 'indent_level', -1) # -1 pour détecter erreur potentielle
+            if parent_indent_level == -1:
+                 logging.warning(f"Attribut 'indent_level' non trouvé sur le parent UI {parent_conditions_frame}. Utilisation de 0.")
+                 parent_indent_level = 0
+            new_indent_level = parent_indent_level + 1
+            # -------------------------------
 
-             self.root.after(50, lambda: self.rules_canvas.configure(scrollregion=self.rules_canvas.bbox("all")))
-         else:
-             logging.warning(f"Type d'item inconnu '{item_type}' pour ajout.")
+            logging.debug(f"Ajout UI avec indent_level={new_indent_level} dans container {ui_container}")
 
+            # Créer l'UI pour le nouvel élément avec le bon niveau d'indentation
+            try:
+                 if 'logic' in new_item_data:
+                     self._create_logic_group_ui(ui_container, new_item_data, rule_id, block_key, is_root=False, indent_level=new_indent_level)
+                 else:
+                     self._create_condition_ui(ui_container, new_item_data, rule_id, block_key, indent_level=new_indent_level)
+
+                 # Mettre à jour la scrollregion après l'ajout effectif des widgets
+                 self.root.after(50, lambda: self.rules_canvas.configure(scrollregion=self.rules_canvas.bbox("all"))) # Léger délai
+                 logging.debug(f"Ajout UI réussi pour {item_type}")
+
+            except Exception as e:
+                 logging.error(f"Erreur lors de la création de l'UI pour le nouvel item {item_type}: {e}", exc_info=True)
+                 # Essayer de retirer les données ajoutées si l'UI échoue?
+                 try:
+                     parent_group_data['conditions'].remove(new_item_data)
+                     logging.info("Données correspondantes à l'UI échouée ont été retirées.")
+                 except ValueError:
+                     logging.error("Impossible de retirer les données après échec création UI.")
+
+        else:
+            logging.warning(f"Type d'item inconnu '{item_type}' pour ajout.")
 
     def _find_parent_data_and_remove(self, target_data_ref, search_root):
         """Cherche récursivement target_data_ref dans search_root et le supprime de la liste parente."""
