@@ -4,7 +4,7 @@ from tkinter import ttk, scrolledtext, messagebox, simpledialog, font as tkFont
 import asyncio
 import threading
 import queue
-import logging
+import logging # Import logging first
 import uuid
 from datetime import datetime, time, timedelta
 import re # Pour la validation de l'heure
@@ -1640,7 +1640,7 @@ class GreenhouseApp:
 
     async def _update_live_kasa_states_task(self):
         """Tâche asynchrone pour lire l'état actuel de toutes les prises Kasa."""
-        logging.debug("Début mise à jour des états Kasa live...")
+        logging.debug("[MONITORING] Début màj états Kasa live...") # DEBUG Log
         new_states = {} # Dictionnaire pour stocker les états lus {mac: {index: bool}}
 
         # Créer une liste de tâches pour lire l'état de chaque appareil Kasa en parallèle
@@ -1652,7 +1652,7 @@ class GreenhouseApp:
              # else: On pourrait logger qu'on ignore un appareil non contrôlable (ex: ampoule)
 
         if not tasks:
-             logging.debug("Aucun appareil Kasa contrôlable trouvé pour la mise à jour d'état.")
+             logging.debug("[MONITORING] Aucun appareil Kasa contrôlable trouvé pour màj état.") # DEBUG Log
              self.live_kasa_states = {} # Vider l'état si aucun appareil
              return
 
@@ -1664,247 +1664,222 @@ class GreenhouseApp:
         for res in results:
             if isinstance(res, Exception):
                 # Logguer l'erreur mais continuer avec les autres résultats
-                logging.error(f"Erreur lors de la lecture de l'état d'un appareil Kasa: {res}")
+                logging.error(f"[MONITORING] Erreur lecture état Kasa: {res}") # ERROR Log
             elif isinstance(res, dict) and res: # Vérifier que c'est un dict non vide
                 new_states.update(res) # Fusionner les états lus {mac: {index: bool}}
                 successful_reads += 1
 
         # Mettre à jour l'état partagé
         self.live_kasa_states = new_states
-        logging.debug(f"États Kasa live mis à jour: {successful_reads}/{len(tasks)} appareils lus avec succès.")
+        logging.debug(f"[MONITORING] États Kasa live màj: {successful_reads}/{len(tasks)} appareils lus OK.") # DEBUG Log
 
     async def _fetch_one_kasa_state(self, mac, controller):
         """Tâche asynchrone pour lire l'état des prises d'un seul appareil Kasa."""
         try:
             # Assurer la connexion (peut impliquer une reconnexion si nécessaire)
-            # La méthode _connect gère la connexion/mise à jour interne de l'objet Device
-            await controller._connect() # Note: Utilisation d'une méthode "privée" du contrôleur
+            await controller._connect() # Note: Utilisation d'une méthode "privée"
 
             # Vérifier si la connexion/mise à jour a réussi
             if controller._device: # Accès à l'attribut "privé"
-                # Lire l'état des prises (renvoie une liste de dicts ou None)
                 outlet_states = await controller.get_outlet_state()
                 if outlet_states is not None:
-                    # Transformer la liste en dictionnaire {index: is_on}
                     states_dict = {
                         outlet['index']: outlet['is_on']
                         for outlet in outlet_states
-                        if 'index' in outlet and 'is_on' in outlet # Vérifier présence des clés
+                        if 'index' in outlet and 'is_on' in outlet
                     }
-                    # Retourner le dictionnaire encapsulé dans un autre avec le MAC comme clé
                     return {mac: states_dict}
                 else:
-                    logging.warning(f"Impossible de récupérer l'état des prises pour {self.get_alias('device', mac)} ({mac}). La méthode a retourné None.")
+                    logging.warning(f"[MONITORING] État Kasa None pour {self.get_alias('device', mac)} ({mac}).") # WARNING Log
             else:
-                logging.warning(f"Échec de la connexion/mise à jour pour {self.get_alias('device', mac)} ({mac}). Impossible de lire l'état.")
+                logging.warning(f"[MONITORING] Échec connexion/màj Kasa pour {self.get_alias('device', mac)} ({mac}).") # WARNING Log
         except Exception as e:
-            # Capturer et logger toute exception pendant la lecture
-            logging.error(f"Erreur lors de la lecture de l'état de {self.get_alias('device', mac)} ({mac}): {e}")
-            # Renvoyer l'exception pour qu'elle soit traitée par gather
+            logging.error(f"[MONITORING] Erreur fetch état Kasa {self.get_alias('device', mac)} ({mac}): {e}") # ERROR Log
             raise e
-        # Retourner un dictionnaire vide en cas d'échec sans exception (ex: connexion échouée)
         return {}
 
     # --- Logique d'Évaluation des Règles (Coeur du Monitoring) ---
     async def _async_monitoring_task(self):
         """Tâche asynchrone principale qui évalue les règles et contrôle les prises."""
-        # Dictionnaire pour suivre les règles dont la condition JUSQU'À est active
-        # {rule_id: {'revert_action': 'ON'/'OFF'}}
         active_until_rules = {}
-        # Horodatage de la dernière mise à jour des états Kasa
         last_kasa_update = datetime.min
-        # Intervalle entre les mises à jour des états Kasa
-        kasa_update_interval = timedelta(seconds=10) # Lire l'état Kasa toutes les 10 secondes
+        kasa_update_interval = timedelta(seconds=10)
 
         logging.info("Début de la boucle de monitoring principale.")
 
-        while self.monitoring_active: # Boucle tant que le flag est True
-            now_dt = datetime.now() # Heure actuelle (datetime object)
-            now_time = now_dt.time() # Heure actuelle (time object pour comparaisons HH:MM)
-            logging.debug(f"--- Cycle de Monitoring {now_dt:%Y-%m-%d %H:%M:%S} ---")
+        while self.monitoring_active:
+            now_dt = datetime.now()
+            now_time = now_dt.time()
+            logging.debug(f"--- Cycle Mon {now_dt:%Y-%m-%d %H:%M:%S} ---") # DEBUG Log
 
             # --- 1. Lecture des Capteurs ---
             current_sensor_values = {}
             try:
-                # Exécuter les lectures synchrones dans l'executor par défaut (thread pool)
-                # pour ne pas bloquer la boucle asyncio
                 temp_values = await self.asyncio_loop.run_in_executor(None, self.temp_manager.read_all_temperatures)
                 light_values = await self.asyncio_loop.run_in_executor(None, self.light_manager.read_all_sensors)
-                # Fusionner les dictionnaires, en ne gardant que les valeurs non None
                 current_sensor_values = {k: v for k, v in {**temp_values, **light_values}.items() if v is not None}
-                logging.debug(f"Valeurs capteurs lues: {current_sensor_values}")
+                # *** DEBUG PRINT: Show sensor values read this cycle ***
+                logging.debug(f"[MONITORING] Valeurs capteurs lues: {current_sensor_values}") # DEBUG Log
             except Exception as e:
-                logging.error(f"Erreur lors de la lecture des capteurs dans le cycle de monitoring: {e}")
-                # Continuer même si les capteurs échouent, les règles dépendantes échoueront simplement
+                logging.error(f"[MONITORING] Erreur lecture capteurs: {e}") # ERROR Log
 
-            # --- 2. Mise à jour des états Kasa (périodiquement) ---
+            # --- 2. Mise à jour des états Kasa ---
             if now_dt - last_kasa_update >= kasa_update_interval:
                 try:
-                    await self._update_live_kasa_states_task() # Met à jour self.live_kasa_states
-                    last_kasa_update = now_dt # Mettre à jour l'horodatage
+                    # *** DEBUG PRINT: Show Kasa states *before* update ***
+                    logging.debug(f"[MONITORING] États Kasa avant màj: {self.live_kasa_states}") # DEBUG Log
+                    await self._update_live_kasa_states_task()
+                    last_kasa_update = now_dt
+                    # *** DEBUG PRINT: Show Kasa states *after* update ***
+                    logging.debug(f"[MONITORING] États Kasa après màj: {self.live_kasa_states}") # DEBUG Log
                 except Exception as e:
-                    # Erreur pendant la mise à jour Kasa (déjà logguée dans la fonction appelée)
-                    # Continuer avec les états Kasa potentiellement obsolètes
-                    logging.error(f"Échec de la mise à jour périodique des états Kasa: {e}")
-            else:
-                 logging.debug("Skipping Kasa state update (interval not reached).")
+                    logging.error(f"[MONITORING] Échec màj Kasa: {e}") # ERROR Log
+            # else:
+                 # logging.debug("[MONITORING] Skipping Kasa state update (interval not reached).") # DEBUG Log
 
 
             # --- 3. Évaluation des Règles ---
-            tasks_to_run = [] # Liste des actions Kasa à exécuter à la fin du cycle
-            # Copier la liste des règles pour éviter les problèmes si elle est modifiée pendant l'itération
+            tasks_to_run = []
             rules_to_evaluate = list(self.rules)
-            # Dictionnaire pour stocker l'état désiré pour chaque prise { (mac, index): 'ON'/'OFF' }
             desired_outlet_states = {}
-            # Copier le dictionnaire des règles UNTIL actives pour itérer dessus
             active_until_copy = dict(active_until_rules)
 
             # --- 3a. Évaluation des conditions JUSQU'À actives ---
-            logging.debug(f"Évaluation des {len(active_until_copy)} règles UNTIL actives...")
+            logging.debug(f"[MONITORING] Éval UNTIL - Règles actives: {list(active_until_copy.keys())}") # DEBUG Log
             for rule_id, until_info in active_until_copy.items():
-                # Retrouver la règle correspondante
                 rule = next((r for r in rules_to_evaluate if r.get('id') == rule_id), None)
                 if not rule:
-                    # La règle a été supprimée pendant que UNTIL était actif
-                    logging.warning(f"La règle {rule_id} (active en UNTIL) n'existe plus. Annulation de UNTIL.")
+                    logging.warning(f"[MONITORING] R{rule_id} (UNTIL): Règle non trouvée. Annulation.") # WARNING Log
                     del active_until_rules[rule_id]
                     continue
 
                 mac = rule.get('target_device_mac')
                 idx = rule.get('target_outlet_index')
                 if mac is None or idx is None:
-                     logging.warning(f"Règle {rule_id} (active en UNTIL) n'a pas de cible valide. Annulation de UNTIL.")
+                     logging.warning(f"[MONITORING] R{rule_id} (UNTIL): Cible invalide. Annulation.") # WARNING Log
                      del active_until_rules[rule_id]
-                     continue # Cible invalide
+                     continue
 
                 outlet_key = (mac, idx)
-                until_logic = rule.get('until_logic', 'OU') # Logique OU par défaut pour UNTIL
+                until_logic = rule.get('until_logic', 'OU')
                 until_conditions = rule.get('until_conditions', [])
 
-                # Si pas de conditions UNTIL, désactiver immédiatement
                 if not until_conditions:
-                    logging.debug(f"Règle {rule_id}: Aucune condition UNTIL. Désactivation immédiate.")
+                    logging.debug(f"[MONITORING] R{rule_id} (UNTIL): Aucune condition. Désactivation.") # DEBUG Log
                     del active_until_rules[rule_id]
                     continue
 
-                # Évaluer si la condition UNTIL est remplie
                 until_condition_met = False
+                condition_that_met_until = None # *** DEBUG: Store which condition met UNTIL ***
                 if until_logic == 'ET':
-                    # Toutes les conditions doivent être vraies
                     all_true = True
-                    if not until_conditions: all_true = False # S'il n'y a pas de condition, ET est faux
+                    if not until_conditions: all_true = False
                     else:
                         for cond in until_conditions:
-                            if not self._check_condition(cond, current_sensor_values, now_time):
+                            cond_result = self._check_condition(cond, current_sensor_values, now_time)
+                            if not cond_result:
                                 all_true = False
-                                logging.debug(f"R{rule_id} UNTIL(ET) échoue sur condition: {cond.get('condition_id','N/A')}")
-                                break # Pas besoin de vérifier les autres
+                                logging.debug(f"[MONITORING] R{rule_id} UNTIL(ET) échoue sur CondID:{cond.get('condition_id','N/A')}") # DEBUG Log
+                                break
                     until_condition_met = all_true
+                    if until_condition_met: condition_that_met_until = "Toutes (ET)" # *** DEBUG ***
                 elif until_logic == 'OU':
-                    # Au moins une condition doit être vraie
                     any_true = False
                     for cond in until_conditions:
-                        if self._check_condition(cond, current_sensor_values, now_time):
+                         cond_result = self._check_condition(cond, current_sensor_values, now_time)
+                         if cond_result:
                             any_true = True
-                            logging.debug(f"R{rule_id} UNTIL(OU) réussit sur condition: {cond.get('condition_id','N/A')}")
-                            break # Pas besoin de vérifier les autres
+                            condition_that_met_until = cond.get('condition_id','N/A') # *** DEBUG ***
+                            logging.debug(f"[MONITORING] R{rule_id} UNTIL(OU) réussit sur CondID:{condition_that_met_until}") # DEBUG Log
+                            break
                     until_condition_met = any_true
                 else:
-                    logging.error(f"Logique UNTIL inconnue '{until_logic}' pour règle {rule_id}. Ignorée.")
-                    until_condition_met = False # Sécurité
+                    logging.error(f"[MONITORING] R{rule_id}: Logique UNTIL inconnue '{until_logic}'.") # ERROR Log
+                    until_condition_met = False
 
-                # Si la condition UNTIL est remplie
                 if until_condition_met:
                     revert_action = until_info['revert_action']
-                    logging.info(f"Règle {rule_id}: Condition JUSQU'À ({until_logic}) remplie. Action de retour: {revert_action}.")
-                    # Définir l'état désiré pour cette prise à l'action de retour
+                    # *** DEBUG PRINT: Show UNTIL met details ***
+                    logging.info(f"[MONITORING] R{rule_id}: Condition JUSQU'À ({until_logic}) REMPLIE (par CondID: {condition_that_met_until}). Action retour: {revert_action}. Capteurs: {current_sensor_values}") # INFO Log
                     desired_outlet_states[outlet_key] = revert_action
-                    # Supprimer la règle du suivi UNTIL actif
-                    del active_until_rules[rule_id]
-                # else: # Condition UNTIL non remplie, on ne fait rien, l'état reste potentiellement forcé par l'action SI initiale
+                    if rule_id in active_until_rules: # Check before deleting
+                        del active_until_rules[rule_id]
 
             # --- 3b. Évaluation des conditions SI ---
-            logging.debug(f"Évaluation des {len(rules_to_evaluate)} règles SI...")
+            logging.debug(f"[MONITORING] Éval SI - Règles à évaluer: {len(rules_to_evaluate)}") # DEBUG Log
             for rule in rules_to_evaluate:
                 rule_id = rule.get('id')
                 mac = rule.get('target_device_mac')
                 idx = rule.get('target_outlet_index')
-                action = rule.get('action') # Action à effectuer si SI est vrai (ON/OFF)
+                action = rule.get('action')
 
-                # Vérifier si la règle est valide et a une cible
                 if not rule_id or mac is None or idx is None or not action:
-                    # logging.debug(f"Règle {rule_id or 'N/A'} ignorée (incomplète ou sans cible).")
                     continue
 
                 outlet_key = (mac, idx)
 
-                # Si l'état de cette prise a déjà été déterminé par une condition UNTIL,
-                # ignorer l'évaluation SI pour ce cycle (UNTIL a priorité pour arrêter)
-                # Sauf si cette règle est CELLE qui est actuellement en UNTIL (pourrait se réactiver?) - Non, gardons simple: UNTIL gagne.
-                if outlet_key in desired_outlet_states and rule_id not in active_until_rules:
-                     logging.debug(f"R{rule_id}: Évaluation SI ignorée car état déjà déterminé par UNTIL d'une autre règle pour {outlet_key}.")
+                # Check if state already set by UNTIL this cycle
+                if outlet_key in desired_outlet_states and rule_id not in active_until_rules: # Ensure it wasn't this rule's UNTIL
+                     logging.debug(f"[MONITORING] R{rule_id}: Éval SI skip (état déjà fixé par UNTIL pour {outlet_key}).") # DEBUG Log
                      continue
 
-                # Si cette règle est elle-même en attente de UNTIL, on l'ignore aussi pour SI
-                # (elle ne peut pas se redéclencher tant que UNTIL n'est pas fini)
+                # Check if this rule is waiting for its OWN UNTIL condition
                 if rule_id in active_until_rules:
-                     logging.debug(f"R{rule_id}: Évaluation SI ignorée car en attente de sa propre condition UNTIL.")
+                     logging.debug(f"[MONITORING] R{rule_id}: Éval SI skip (règle en attente UNTIL).") # DEBUG Log
                      continue
 
-
-                trigger_logic = rule.get('trigger_logic', 'ET') # Logique ET par défaut pour SI
+                trigger_logic = rule.get('trigger_logic', 'ET')
                 trigger_conditions = rule.get('conditions', [])
 
-                # Si pas de conditions SI, la règle ne se déclenche jamais
                 if not trigger_conditions:
-                    # logging.debug(f"R{rule_id}: Ignorée (aucune condition SI).")
                     continue
 
-                # Évaluer si la condition SI est remplie
                 trigger_condition_met = False
+                condition_that_met_trigger = None # *** DEBUG: Store which condition met SI ***
                 if trigger_logic == 'ET':
-                    # Toutes les conditions doivent être vraies
-                    all_true = True
-                    if not trigger_conditions: all_true = False # S'il n'y a pas de condition, ET est faux
+                    all_true=True
+                    if not trigger_conditions: all_true=False
                     else:
                         for cond in trigger_conditions:
-                            if not self._check_condition(cond, current_sensor_values, now_time):
-                                all_true = False
-                                logging.debug(f"R{rule_id} SI(ET) échoue sur condition: {cond.get('condition_id','N/A')}")
+                            cond_result = self._check_condition(cond, current_sensor_values, now_time)
+                            if not cond_result:
+                                all_true=False
+                                logging.debug(f"[MONITORING] R{rule_id} SI(ET) échoue sur CondID:{cond.get('condition_id','N/A')}") # DEBUG Log
                                 break
                     trigger_condition_met = all_true
+                    if trigger_condition_met: condition_that_met_trigger = "Toutes (ET)" # *** DEBUG ***
                 elif trigger_logic == 'OU':
-                    # Au moins une condition doit être vraie
-                    any_true = False
+                    any_true=False
                     for cond in trigger_conditions:
-                        if self._check_condition(cond, current_sensor_values, now_time):
-                            any_true = True
-                            logging.debug(f"R{rule_id} SI(OU) réussit sur condition: {cond.get('condition_id','N/A')}")
+                        cond_result = self._check_condition(cond, current_sensor_values, now_time)
+                        if cond_result:
+                            any_true=True
+                            condition_that_met_trigger = cond.get('condition_id','N/A') # *** DEBUG ***
+                            logging.debug(f"[MONITORING] R{rule_id} SI(OU) réussit sur CondID:{condition_that_met_trigger}") # DEBUG Log
                             break
                     trigger_condition_met = any_true
                 else:
-                    logging.error(f"Logique SI inconnue '{trigger_logic}' pour règle {rule_id}. Ignorée.")
+                    logging.error(f"[MONITORING] R{rule_id}: Logique SI inconnue '{trigger_logic}'.") # ERROR Log
                     trigger_condition_met = False
 
-                # Si la condition SI est remplie
                 if trigger_condition_met:
-                    logging.debug(f"Règle {rule_id}: Condition SI ({trigger_logic}) remplie. Action désirée: {action}.")
-                    # Définir l'état désiré pour cette prise (peut écraser une valeur par défaut)
-                    # Important: Ne pas écraser si UNTIL a déjà défini l'état ! (vérifié plus haut)
+                    # *** DEBUG PRINT: Show SI met details ***
+                    logging.info(f"[MONITORING] R{rule_id}: Condition SI ({trigger_logic}) REMPLIE (par CondID: {condition_that_met_trigger}). Action désirée: {action}. Capteurs: {current_sensor_values}") # INFO Log
                     if outlet_key not in desired_outlet_states:
                          desired_outlet_states[outlet_key] = action
-
-                         # Si cette règle a des conditions JUSQU'À et n'est pas déjà active, l'activer
                          if rule.get('until_conditions') and rule_id not in active_until_rules:
-                             revert_action = 'OFF' if action == 'ON' else 'ON' # Action inverse pour UNTIL
-                             logging.info(f"Règle {rule_id}: Activation de la condition JUSQU'À ({rule.get('until_logic','OU')}). Action de retour: {revert_action}.")
+                             revert_action = 'OFF' if action == 'ON' else 'ON'
+                             # *** DEBUG PRINT: Show UNTIL activation ***
+                             logging.info(f"[MONITORING] R{rule_id}: Activation JUSQU'À ({rule.get('until_logic','OU')}). Action retour: {revert_action}.") # INFO Log
                              active_until_rules[rule_id] = {'revert_action': revert_action}
-                    # else: L'état était déjà défini (probablement par une autre règle SI, la première évaluée gagne ou conflit?)
-                    #     logging.warning(f"R{rule_id}: Conflit potentiel? État pour {outlet_key} déjà défini à {desired_outlet_states[outlet_key]} par une autre règle SI?")
+                    else:
+                         # *** DEBUG PRINT: Potential conflict ***
+                         logging.warning(f"[MONITORING] R{rule_id}: Conflit potentiel? État pour {outlet_key} déjà défini à {desired_outlet_states[outlet_key]} (par UNTIL ou autre SI?). Action {action} ignorée.") # WARNING Log
+
 
             # --- 4. Application des changements Kasa ---
-            logging.debug(f"Application des états Kasa désirés: {desired_outlet_states}")
-            # Ensemble de toutes les prises gérées par au moins une règle
+            # *** DEBUG PRINT: Show final desired states before applying ***
+            logging.debug(f"[MONITORING] États Kasa désirés finaux pour ce cycle: {desired_outlet_states}") # DEBUG Log
             all_managed_outlets = set(
                 (r.get('target_device_mac'), r.get('target_outlet_index'))
                 for r in rules_to_evaluate
@@ -1914,341 +1889,298 @@ class GreenhouseApp:
             # --- 4a. Appliquer les états désirés explicites ---
             for outlet_key, desired_state in desired_outlet_states.items():
                 mac, idx = outlet_key
-                # Récupérer l'état actuel connu (depuis la dernière lecture)
-                current_live_state = self.live_kasa_states.get(mac, {}).get(idx) # Peut être None si inconnu
+                current_live_state = self.live_kasa_states.get(mac, {}).get(idx)
 
                 action_needed = False
                 kasa_function_name = None
 
-                # Déterminer si une action est nécessaire
-                if desired_state == 'ON' and current_live_state is not True: # ON désiré, état actuel OFF ou Inconnu
+                if desired_state == 'ON' and current_live_state is not True:
                     action_needed = True
                     kasa_function_name = 'turn_outlet_on'
-                elif desired_state == 'OFF' and current_live_state is not False: # OFF désiré, état actuel ON ou Inconnu
+                elif desired_state == 'OFF' and current_live_state is not False:
                     action_needed = True
                     kasa_function_name = 'turn_outlet_off'
 
                 if action_needed:
-                    # Vérifier si l'appareil Kasa est connu
                     if mac in self.kasa_devices:
                         controller = self.kasa_devices[mac]['controller']
-                        logging.info(f"Action Kasa: {self.get_alias('device', mac)} / {self.get_alias('outlet', mac, idx)} -> {desired_state}")
-                        # Ajouter la tâche Kasa à exécuter (ex: controller.turn_outlet_on(idx))
+                        # *** DEBUG PRINT: Show explicit action being taken ***
+                        logging.info(f"[ACTION KASA] Explicite: {self.get_alias('device', mac)} / {self.get_alias('outlet', mac, idx)} -> {desired_state} (État live avant: {current_live_state})") # INFO Log
                         tasks_to_run.append(getattr(controller, kasa_function_name)(idx))
-                        # Mettre à jour immédiatement l'état live supposé pour le prochain cycle
                         self.live_kasa_states.setdefault(mac, {})[idx] = (desired_state == 'ON')
                     else:
-                        logging.error(f"Impossible d'exécuter l'action {desired_state}: Appareil Kasa {mac} non trouvé.")
-                # else: # Pas d'action nécessaire, l'état live correspond à l'état désiré
-                     # logging.debug(f"Aucune action Kasa nécessaire pour {outlet_key}, état déjà {desired_state}.")
-
+                        logging.error(f"[ACTION KASA] Erreur: Appareil Kasa {mac} non trouvé pour action {desired_state}.") # ERROR Log
+                # else:
+                     # logging.debug(f"[ACTION KASA] Aucune action explicite requise pour {outlet_key}, état déjà {desired_state}.") # DEBUG Log
 
             # --- 4b. Gérer les prises non explicitement désirées (implicitement OFF) ---
-            # Parcourir toutes les prises connues dans l'état live
-            # Faire une copie des clés pour éviter les problèmes de modification pendant l'itération
             live_outlets_to_check = []
             for mac, outlets in self.live_kasa_states.items():
                  for idx, is_on in outlets.items():
                       live_outlets_to_check.append(((mac, idx), is_on))
 
             for outlet_key, is_on in live_outlets_to_check:
-                # Si la prise est gérée par une règle ET n'a pas d'état désiré défini explicitement CE CYCLE
                 if outlet_key in all_managed_outlets and outlet_key not in desired_outlet_states:
-                    # Si elle est actuellement ON, elle doit être éteinte (comportement implicite)
                     if is_on:
                         mac, idx = outlet_key
                         if mac in self.kasa_devices:
                             controller = self.kasa_devices[mac]['controller']
-                            logging.info(f"Action Kasa implicite: {self.get_alias('device', mac)} / {self.get_alias('outlet', mac, idx)} -> OFF (non désirée explicitement)")
+                            # *** DEBUG PRINT: Show implicit action being taken ***
+                            logging.info(f"[ACTION KASA] Implicite: {self.get_alias('device', mac)} / {self.get_alias('outlet', mac, idx)} -> OFF (non désirée explicitement ce cycle)") # INFO Log
                             tasks_to_run.append(controller.turn_outlet_off(idx))
-                            # Mettre à jour l'état live supposé
                             self.live_kasa_states.setdefault(mac, {})[idx] = False
                         else:
-                            logging.error(f"Impossible d'exécuter l'action OFF implicite: Appareil Kasa {mac} non trouvé.")
+                            logging.error(f"[ACTION KASA] Erreur: Appareil Kasa {mac} non trouvé pour action OFF implicite.") # ERROR Log
 
             # --- 5. Exécuter les tâches Kasa ---
             if tasks_to_run:
-                logging.debug(f"Exécution de {len(tasks_to_run)} tâches Kasa...")
+                logging.debug(f"[MONITORING] Exécution de {len(tasks_to_run)} tâches Kasa...") # DEBUG Log
                 try:
                     results = await asyncio.gather(*tasks_to_run, return_exceptions=True)
-                    # Logguer les erreurs éventuelles des tâches Kasa
                     for i, res in enumerate(results):
                         if isinstance(res, Exception):
-                             # Difficile de savoir quelle tâche a échoué sans plus d'infos
-                             logging.error(f"Erreur lors de l'exécution d'une tâche Kasa (index {i}): {res}")
+                             logging.error(f"[MONITORING] Erreur tâche Kasa (index {i}): {res}") # ERROR Log
                 except Exception as e_gather:
-                     logging.error(f"Erreur imprévue durant gather pour les actions Kasa: {e_gather}")
-                logging.debug("Tâches Kasa du cycle terminées.")
-            else:
-                 logging.debug("Aucune action Kasa à exécuter ce cycle.")
-
+                     logging.error(f"[MONITORING] Erreur gather Kasa: {e_gather}") # ERROR Log
+                logging.debug("[MONITORING] Tâches Kasa du cycle terminées.") # DEBUG Log
+            # else:
+                 # logging.debug("[MONITORING] Aucune action Kasa à exécuter ce cycle.") # DEBUG Log
 
             # --- 6. Attente avant le prochain cycle ---
-            # Attendre un court instant pour éviter de surcharger le CPU et laisser du temps pour d'autres tâches
-            await asyncio.sleep(2) # Attente de 2 secondes entre les cycles d'évaluation
+            await asyncio.sleep(2)
 
-        logging.info("Sortie de la boucle de monitoring principale (monitoring_active est False).")
+        logging.info("Sortie de la boucle de monitoring principale.") # INFO Log
 
 
     # --- Fonction de Vérification de Condition ---
+    # Add DEBUG logs inside _check_condition as well
     def _check_condition(self, condition_data, current_sensor_values, current_time_obj):
-        """
-        Évalue une condition unique (Capteur ou Heure).
-
-        Args:
-            condition_data (dict): Le dictionnaire décrivant la condition.
-            current_sensor_values (dict): Dictionnaire des valeurs actuelles des capteurs {sensor_id: value}.
-            current_time_obj (datetime.time): L'heure actuelle.
-
-        Returns:
-            bool: True si la condition est remplie, False sinon ou en cas d'erreur.
-        """
+        """Évalue une condition unique (Capteur ou Heure)."""
         cond_type = condition_data.get('type')
         operator = condition_data.get('operator')
-        cond_id_log = condition_data.get('condition_id', 'N/A') # Pour les logs
+        cond_id_log = condition_data.get('condition_id', 'N/A')
 
-        # Vérifications de base
         if not cond_type or not operator:
-            logging.warning(f"Condition invalide (manque type ou opérateur) (ID:{cond_id_log}): {condition_data}")
+            logging.warning(f"[COND CHECK] Cond invalide (ID:{cond_id_log}): manque type/op - {condition_data}") # WARNING Log
             return False
 
         try:
-            # --- Condition de type Capteur ---
             if cond_type == 'Capteur':
                 sensor_id = condition_data.get('id')
-                threshold = condition_data.get('threshold') # Doit être un float
+                threshold = condition_data.get('threshold')
 
-                # Vérifier la validité des données de la condition
                 if sensor_id is None or threshold is None or operator not in SENSOR_OPERATORS:
-                    logging.warning(f"Données de condition Capteur invalides (ID:{cond_id_log}): ID={sensor_id}, Seuil={threshold}, Op={operator}")
+                    logging.warning(f"[COND CHECK] Cond Capteur invalide (ID:{cond_id_log}): {condition_data}") # WARNING Log
                     return False
 
-                # Vérifier si la valeur du capteur est disponible
                 if sensor_id not in current_sensor_values:
-                    logging.debug(f"Valeur manquante pour le capteur {self.get_alias('sensor', sensor_id)} ({sensor_id}) requis par la condition (ID:{cond_id_log}).")
-                    return False # Impossible d'évaluer sans la valeur
+                    logging.debug(f"[COND CHECK] (ID:{cond_id_log}): Valeur manquante pour capteur {self.get_alias('sensor', sensor_id)} ({sensor_id})") # DEBUG Log
+                    return False
 
-                # Effectuer la comparaison numérique
                 current_value = current_sensor_values[sensor_id]
-                logging.debug(f"Eval Cond Capteur (ID:{cond_id_log}): {current_value} {operator} {threshold} ?")
+                # *** DEBUG PRINT: Show sensor condition check ***
+                logging.debug(f"[COND CHECK] Eval Capteur (ID:{cond_id_log}): '{self.get_alias('sensor', sensor_id)}' ({current_value}) {operator} {threshold} ?") # DEBUG Log
                 result = self._compare(current_value, operator, float(threshold))
-                logging.debug(f" -> Résultat: {result}")
+                logging.debug(f"[COND CHECK] -> Résultat (ID:{cond_id_log}): {result}") # DEBUG Log
                 return result
 
-            # --- Condition de type Heure ---
             elif cond_type == 'Heure':
-                time_str = condition_data.get('value') # Format HH:MM
+                time_str = condition_data.get('value')
 
-                # Vérifier la validité des données de la condition
                 if not time_str or operator not in TIME_OPERATORS:
-                    logging.warning(f"Données de condition Heure invalides (ID:{cond_id_log}): Valeur={time_str}, Op={operator}")
+                    logging.warning(f"[COND CHECK] Cond Heure invalide (ID:{cond_id_log}): {condition_data}") # WARNING Log
                     return False
-
-                # Convertir la chaîne HH:MM en objet datetime.time
                 try:
                     target_time = datetime.strptime(time_str, '%H:%M').time()
                 except ValueError:
-                    logging.error(f"Format d'heure invalide '{time_str}' dans la condition (ID:{cond_id_log}).")
+                    logging.error(f"[COND CHECK] Format heure invalide (ID:{cond_id_log}): '{time_str}'") # ERROR Log
                     return False
 
-                # Effectuer la comparaison temporelle
-                logging.debug(f"Eval Cond Heure (ID:{cond_id_log}): {current_time_obj:%H:%M:%S} {operator} {target_time:%H:%M} ?")
-                # Comparaison directe pour <, >, <=, >=
+                # *** DEBUG PRINT: Show time condition check ***
+                logging.debug(f"[COND CHECK] Eval Heure (ID:{cond_id_log}): {current_time_obj:%H:%M:%S} {operator} {target_time:%H:%M} ?") # DEBUG Log
                 if operator == '<': result = current_time_obj < target_time
                 elif operator == '>': result = current_time_obj > target_time
                 elif operator == '<=': result = current_time_obj <= target_time
                 elif operator == '>=': result = current_time_obj >= target_time
-                # Comparaison basée sur les minutes pour = et != (ignore les secondes)
                 else:
                     current_minutes = current_time_obj.hour * 60 + current_time_obj.minute
                     target_minutes = target_time.hour * 60 + target_time.minute
                     if operator == '=': result = current_minutes == target_minutes
                     elif operator == '!=': result = current_minutes != target_minutes
-                    else: result = False # Ne devrait pas arriver si TIME_OPERATORS est correct
+                    else: result = False
 
-                logging.debug(f" -> Résultat: {result}")
+                logging.debug(f"[COND CHECK] -> Résultat (ID:{cond_id_log}): {result}") # DEBUG Log
                 return result
-
-            # --- Type de condition inconnu ---
             else:
-                logging.error(f"Type de condition inconnu rencontré (ID:{cond_id_log}): {cond_type}")
+                logging.error(f"[COND CHECK] Type cond inconnu (ID:{cond_id_log}): {cond_type}") # ERROR Log
                 return False
-
         except ValueError as e:
-            # Erreur de conversion (ex: seuil non numérique)
-            logging.error(f"Erreur de valeur lors de l'évaluation de la condition (ID:{cond_id_log}) - {condition_data}: {e}")
+            logging.error(f"[COND CHECK] Erreur valeur (ID:{cond_id_log}) - {condition_data}: {e}") # ERROR Log
             return False
         except Exception as e:
-            # Capturer toute autre erreur imprévue pendant l'évaluation
-            logging.error(f"Erreur inattendue lors de l'évaluation de la condition (ID:{cond_id_log}) - {condition_data}: {e}", exc_info=True)
+            logging.error(f"[COND CHECK] Erreur eval cond (ID:{cond_id_log}) - {condition_data}: {e}", exc_info=True) # ERROR Log
             return False
 
     # --- Fonction de Comparaison Numérique ---
     def _compare(self, value1, operator, value2):
         """Effectue une comparaison numérique entre deux valeurs."""
         try:
-            # Convertir les valeurs en float pour la comparaison
             v1 = float(value1)
             v2 = float(value2)
-            # logging.debug(f"Comparaison Numérique: {v1} {operator} {v2}")
+            # logging.debug(f"Comparaison Numérique: {v1} {operator} {v2}") # Keep this commented unless very detailed debug needed
 
             if operator == '<': return v1 < v2
             elif operator == '>': return v1 > v2
-            # Utiliser une petite tolérance pour la comparaison d'égalité avec les floats
             elif operator == '=': return abs(v1 - v2) < 1e-9
             elif operator == '!=': return abs(v1 - v2) >= 1e-9
             elif operator == '<=': return v1 <= v2
             elif operator == '>=': return v1 >= v2
             else:
-                # Opérateur inconnu (ne devrait pas arriver si SENSOR_OPERATORS est correct)
-                logging.warning(f"Opérateur de comparaison numérique inconnu: {operator}")
+                logging.warning(f"Opérateur comparaison numérique inconnu: {operator}") # WARNING Log
                 return False
         except (ValueError, TypeError) as e:
-            # Gérer les erreurs si les valeurs ne peuvent pas être converties en float
-            logging.error(f"Erreur lors de la comparaison numérique: impossible de convertir '{value1}' ou '{value2}' en nombre. Opérateur: {operator}. Erreur: {e}")
+            logging.error(f"Erreur comp num: impossible de convertir '{value1}' ou '{value2}'. Op: {operator}. Err: {e}") # ERROR Log
             return False
 
     # --- Fonctions d'Extinction / Sauvegarde / Fermeture ---
     def _turn_off_all_kasa_safely(self):
         """Lance l'extinction de toutes les prises Kasa dans une boucle asyncio."""
-        logging.info("Tentative d'extinction sécurisée de toutes les prises Kasa...")
+        logging.info("Tentative d'extinction sécurisée de toutes les prises Kasa...") # INFO Log
         try:
             # Essayer d'obtenir/créer une boucle asyncio et exécuter la tâche d'extinction
             try:
                 loop = asyncio.get_event_loop()
-                # Si une boucle existe et tourne, l'utiliser
                 if loop.is_running():
-                     # Créer une future et l'ajouter à la boucle existante
                      future = asyncio.run_coroutine_threadsafe(self._async_turn_off_all(), loop)
-                     future.result(timeout=15) # Attendre la fin avec timeout
+                     future.result(timeout=15)
                 else:
-                     # Si la boucle existe mais ne tourne pas, utiliser run_until_complete
                      loop.run_until_complete(self._async_turn_off_all())
             except RuntimeError:
-                # Si get_event_loop échoue (pas de boucle définie pour ce thread), utiliser asyncio.run
-                logging.info("Aucune boucle asyncio existante, utilisation de asyncio.run pour l'extinction.")
+                logging.info("Aucune boucle asyncio existante, utilisation de asyncio.run pour l'extinction.") # INFO Log
                 asyncio.run(self._async_turn_off_all())
         except asyncio.TimeoutError:
-             logging.error("Timeout dépassé lors de l'attente de l'extinction des prises Kasa.")
+             logging.error("Timeout dépassé lors de l'attente de l'extinction des prises Kasa.") # ERROR Log
         except Exception as e:
-            logging.error(f"Erreur inattendue lors de l'extinction sécurisée des prises Kasa: {e}", exc_info=True)
+            logging.error(f"Erreur inattendue lors de l'extinction sécurisée des prises Kasa: {e}", exc_info=True) # ERROR Log
 
     async def _async_turn_off_all(self):
         """Tâche asynchrone pour éteindre toutes les prises de tous les appareils Kasa connus."""
-        tasks = {} # Utiliser un dictionnaire pour logger quelle tâche correspond à quel appareil
-        logging.info(f"Préparation des tâches d'extinction pour {len(self.kasa_devices)} appareils Kasa...")
+        tasks = {}
+        logging.info(f"Préparation des tâches d'extinction pour {len(self.kasa_devices)} appareils Kasa...") # INFO Log
 
         for mac, device_data in self.kasa_devices.items():
             controller = device_data['controller']
             device_alias = self.get_alias('device', mac)
-            task_key = f"{device_alias} ({mac})" # Clé pour identifier la tâche dans les logs
+            task_key = f"{device_alias} ({mac})"
 
-            # Ajouter une tâche seulement si c'est une prise ou multiprise
             if device_data['info'].get('is_strip') or device_data['info'].get('is_plug'):
-                logging.debug(f"Ajout tâche extinction pour: {task_key}")
+                logging.debug(f"Ajout tâche extinction pour: {task_key}") # DEBUG Log
                 tasks[task_key] = controller.turn_all_outlets_off()
             else:
-                # Si ce n'est pas une prise (ex: ampoule), créer une tâche vide (asyncio.sleep(0))
-                # pour que gather fonctionne correctement mais ne rien faire.
                 tasks[task_key] = asyncio.sleep(0)
 
         if tasks:
-            logging.info(f"Exécution de {len(tasks)} tâches d'extinction Kasa en parallèle...")
+            logging.info(f"Exécution de {len(tasks)} tâches d'extinction Kasa en parallèle...") # INFO Log
             task_keys = list(tasks.keys())
             task_coroutines = list(tasks.values())
-            # Exécuter toutes les tâches en parallèle et attendre leur complétion
             results = await asyncio.gather(*task_coroutines, return_exceptions=True)
 
-            # Compter les succès et échecs
             success_count = 0
             failure_count = 0
             for i, result in enumerate(results):
-                key = task_keys[i] # Retrouver la clé de la tâche
+                key = task_keys[i]
                 if isinstance(result, Exception):
-                    logging.error(f"Erreur lors de l'extinction de '{key}': {result}")
+                    logging.error(f"Erreur lors de l'extinction de '{key}': {result}") # ERROR Log
                     failure_count += 1
                 else:
-                    # Vérifier si la tâche était une vraie extinction ou un sleep(0)
-                    if not (isinstance(tasks[key], asyncio.Task) and tasks[key].get_coro().__name__ == 'sleep'):
-                         # Ne compter comme succès que si ce n'était pas un sleep(0)
-                         # logging.debug(f"Extinction réussie pour '{key}'.") # Optionnel, peut être verbeux
+                    # Check if the task was a real turn_off or just sleep(0)
+                    original_coro = task_coroutines[i]
+                    # Check if it's a coroutine and its name is 'sleep'
+                    is_sleep_task = asyncio.iscoroutine(original_coro) and getattr(original_coro, '__name__', '') == 'sleep'
+                    if not is_sleep_task:
+                         # Only log success for actual turn_off tasks if needed
+                         # logging.debug(f"Extinction réussie pour '{key}'.") # Optional DEBUG Log
                          pass
-                    success_count += 1 # Compter les sleep(0) comme succès aussi pour le total
+                    success_count += 1
 
-            logging.info(f"Extinction Kasa terminée. Tâches complétées: {success_count}, Échecs: {failure_count}.")
+
+            logging.info(f"Extinction Kasa terminée. Tâches complétées: {success_count}, Échecs: {failure_count}.") # INFO Log
         else:
-            logging.info("Aucun appareil Kasa de type prise/multiprise trouvé à éteindre.")
+            logging.info("Aucun appareil Kasa de type prise/multiprise trouvé à éteindre.") # INFO Log
 
     def save_configuration(self):
         """Sauvegarde la configuration actuelle (alias et règles) dans le fichier YAML."""
-        logging.info("Préparation de la sauvegarde de la configuration...")
+        logging.info("Préparation de la sauvegarde de la configuration...") # INFO Log
 
-        # S'assurer que les dernières modifications dans l'UI des règles sont prises en compte
-        # en appelant on_rule_change pour chaque règle (au cas où un événement n'aurait pas été traité)
-        for rule_id in list(self.rule_widgets.keys()): # Itérer sur une copie des clés
-             if rule_id in self.rule_widgets: # Vérifier si la règle existe toujours dans l'UI
+        for rule_id in list(self.rule_widgets.keys()):
+             if rule_id in self.rule_widgets:
                  try:
                      self.on_rule_change(rule_id)
                  except Exception as e:
-                     logging.error(f"Erreur lors de l'appel à on_rule_change avant sauvegarde pour règle {rule_id}: {e}")
+                     logging.error(f"Erreur on_rule_change avant save pour règle {rule_id}: {e}") # ERROR Log
 
-        # Préparer le dictionnaire à sauvegarder
         config_to_save = {
             "aliases": self.aliases,
-            "rules": self.rules # Utiliser la liste self.rules qui est mise à jour
+            "rules": self.rules
         }
-        logging.debug(f"Données préparées pour la sauvegarde: {config_to_save}")
+        logging.debug(f"Données préparées pour la sauvegarde: {config_to_save}") # DEBUG Log
 
-        # Appeler la fonction de sauvegarde du module config_manager
         if save_config(config_to_save, DEFAULT_CONFIG_FILE):
-            logging.info(f"Configuration sauvegardée avec succès dans {DEFAULT_CONFIG_FILE}.")
+            logging.info(f"Configuration sauvegardée avec succès dans {DEFAULT_CONFIG_FILE}.") # INFO Log
             messagebox.showinfo("Sauvegarde", "Configuration sauvegardée avec succès.", parent=self.root)
         else:
-            # L'erreur est déjà logguée par save_config
-            messagebox.showerror("Sauvegarde Échouée", "Une erreur est survenue lors de la sauvegarde de la configuration. Vérifiez les logs pour plus de détails.", parent=self.root)
+            messagebox.showerror("Sauvegarde Échouée", "Une erreur est survenue lors de la sauvegarde. Vérifiez les logs.", parent=self.root)
 
     def on_closing(self):
         """Gère l'événement de fermeture de la fenêtre principale."""
-        # Si le monitoring est actif, demander confirmation
         if self.monitoring_active:
             if messagebox.askyesno("Quitter l'Application",
-                                   "Le monitoring est actuellement actif.\n\nVoulez-vous arrêter le monitoring et quitter l'application ?",
+                                   "Le monitoring est actif.\n\nVoulez-vous arrêter et quitter ?",
                                    parent=self.root):
-                logging.info("Arrêt du monitoring et fermeture de l'application demandés par l'utilisateur...")
-                # Arrêter le monitoring (cela inclut l'extinction des prises)
+                logging.info("Arrêt monitoring & fermeture demandés...") # INFO Log
                 self.stop_monitoring()
-                # Planifier la destruction de la fenêtre après un court délai pour laisser le temps à stop_monitoring de finir
-                logging.info("Fermeture de l'application dans 1 seconde...")
+                logging.info("Fermeture app dans 1 sec...") # INFO Log
                 self.root.after(1000, self.root.destroy)
             else:
-                # L'utilisateur a annulé, ne rien faire
-                logging.debug("Fermeture annulée par l'utilisateur (monitoring actif).")
+                logging.debug("Fermeture annulée (monitoring actif).") # DEBUG Log
                 return
         else:
-            # Si le monitoring est inactif, demander une simple confirmation
             if messagebox.askyesno("Quitter l'Application",
-                                   "Êtes-vous sûr de vouloir quitter l'application ?",
+                                   "Êtes-vous sûr de vouloir quitter ?",
                                    parent=self.root):
-                logging.info("Fermeture de l'application demandée par l'utilisateur (monitoring inactif)...")
-                # Par sécurité, lancer quand même l'extinction des prises au cas où
-                logging.info("Lancement de l'extinction de sécurité des prises Kasa...")
+                logging.info("Fermeture demandée (monitoring inactif)...") # INFO Log
+                logging.info("Lancement extinction Kasa...") # INFO Log
                 threading.Thread(target=self._turn_off_all_kasa_safely, daemon=True).start()
-                # Planifier la destruction de la fenêtre
-                logging.info("Fermeture de l'application dans 1 seconde...")
+                logging.info("Fermeture app dans 1 sec...") # INFO Log
                 self.root.after(1000, self.root.destroy)
             else:
-                # L'utilisateur a annulé
-                logging.debug("Fermeture annulée par l'utilisateur (monitoring inactif).")
+                logging.debug("Fermeture annulée (monitoring inactif).") # DEBUG Log
 
 
 # --- Point d'Entrée Principal ---
 if __name__ == "__main__":
-    # Décommenter la ligne suivante pour activer les logs DEBUG dans la console
-    # logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s')
+    # Configure logging to show DEBUG messages
+    # Make sure logger_setup.py *also* allows DEBUG level if you are using it
+    # Add filename and line number to log format for easier debugging
+    log_format = '%(asctime)s - %(levelname)s - [%(threadName)s] - %(filename)s:%(lineno)d - %(message)s'
+    logging.basicConfig(level=logging.DEBUG, format=log_format)
 
-    # Créer la fenêtre principale Tkinter
+    # If using logger_setup.py, ensure it's configured for DEBUG level as well.
+    # The basicConfig call here might be overridden by logger_setup if it also configures the root logger.
+    # It's generally better to configure logging in one place (either here or in logger_setup).
+
     root = tk.Tk()
-    # Instancier l'application
+    # Pass the log queue if logger_setup expects it and basicConfig isn't used for the final handler
+    # app = GreenhouseApp(root) # Assuming logger_setup handles queue integration
+
+    # If NOT using logger_setup and relying solely on basicConfig + QueueHandler:
+    # log_queue_main = queue.Queue()
+    # queue_handler = logging.handlers.QueueHandler(log_queue_main)
+    # logging.getLogger().addHandler(queue_handler)
+    # # Modify GreenhouseApp.__init__ to accept and use log_queue_main if needed
+    # app = GreenhouseApp(root) # Or app = GreenhouseApp(root, log_queue_main)
+
+    # Assuming logger_setup handles the queue properly:
     app = GreenhouseApp(root)
-    # Lancer la boucle principale de Tkinter
+
     root.mainloop()
