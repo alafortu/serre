@@ -92,9 +92,10 @@ class ConditionEditor(simpledialog.Dialog):
         self.conditions_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         # Lier la molette de la souris au canvas (sur Linux/Windows)
-        self.conditions_canvas.bind_all("<MouseWheel>", self._on_mousewheel) # Windows
-        self.conditions_canvas.bind_all("<Button-4>", self._on_mousewheel) # Linux scroll up
-        self.conditions_canvas.bind_all("<Button-5>", self._on_mousewheel) # Linux scroll down
+        # Utiliser bind (pas bind_all) pour éviter conflits potentiels avec d'autres widgets
+        self.conditions_canvas.bind("<MouseWheel>", self._on_mousewheel) # Windows
+        self.conditions_canvas.bind("<Button-4>", self._on_mousewheel) # Linux scroll up
+        self.conditions_canvas.bind("<Button-5>", self._on_mousewheel) # Linux scroll down
 
         # Peupler les conditions initiales
         if not self.initial_conditions:
@@ -123,11 +124,23 @@ class ConditionEditor(simpledialog.Dialog):
 
     def _on_mousewheel(self, event):
         """Gère le défilement avec la molette."""
-        # Adapter la direction et l'unité selon le système
-        if event.num == 5 or event.delta < 0: # Scroll down
-            self.conditions_canvas.yview_scroll(1, "units")
-        elif event.num == 4 or event.delta > 0: # Scroll up
-            self.conditions_canvas.yview_scroll(-1, "units")
+        delta = 0
+        if event.num == 5: # Linux scroll down
+            delta = 1
+        elif event.num == 4: # Linux scroll up
+            delta = -1
+        elif event.delta < 0: # Windows scroll down
+             delta = 1
+        elif event.delta > 0: # Windows scroll up
+             delta = -1
+
+        if delta != 0:
+            self.conditions_canvas.yview_scroll(delta, "units")
+            # Empêcher l'événement de se propager à la fenêtre principale si la scrollbar est active
+            # (Vérifier si la scrollbar est visible et si le scroll a eu lieu)
+            # Cette partie est plus complexe et peut être omise si non problématique.
+            return "break"
+
 
     def _update_scrollregion(self):
         """Force la mise à jour de la scrollregion."""
@@ -141,33 +154,27 @@ class ConditionEditor(simpledialog.Dialog):
         line_frame.pack(fill=tk.X, expand=True, pady=1)
 
         widgets = {}
-        # Utiliser l'ID existant ou en générer un nouveau
         condition_id = condition_data.get('condition_id', f"new_{self.condition_id_counter}") if condition_data else f"new_{self.condition_id_counter}"
         self.condition_id_counter += 1
 
-        # Type (Capteur/Heure)
         widgets['type_var'] = tk.StringVar()
         widgets['type_combo'] = ttk.Combobox(line_frame, textvariable=widgets['type_var'], values=CONDITION_TYPES, state="readonly", width=8)
         widgets['type_combo'].pack(side=tk.LEFT, padx=2)
         widgets['type_combo'].bind('<<ComboboxSelected>>', lambda e, lw=widgets: self._on_condition_type_change(lw))
 
-        # Capteur
         widgets['sensor_var'] = tk.StringVar()
-        sensor_names = [""] + [name for name, _id in self.available_sensors] # Ajouter option vide
+        sensor_names = [""] + sorted([name for name, _id in self.available_sensors]) # Trier les noms + option vide
         widgets['sensor_combo'] = ttk.Combobox(line_frame, textvariable=widgets['sensor_var'], values=sensor_names, state="disabled", width=20)
         widgets['sensor_combo'].pack(side=tk.LEFT, padx=2)
 
-        # Opérateur
         widgets['operator_var'] = tk.StringVar()
         widgets['operator_combo'] = ttk.Combobox(line_frame, textvariable=widgets['operator_var'], values=OPERATORS, state="readonly", width=4)
         widgets['operator_combo'].pack(side=tk.LEFT, padx=2)
 
-        # Valeur
         widgets['value_var'] = tk.StringVar()
         widgets['value_entry'] = ttk.Entry(line_frame, textvariable=widgets['value_var'], width=10)
         widgets['value_entry'].pack(side=tk.LEFT, padx=2)
 
-        # Bouton Supprimer Ligne
         delete_button = ttk.Button(line_frame, text="➖", width=2, style="Red.TButton",
                                     command=lambda frame=line_frame: self._delete_condition_line(frame))
         delete_button.pack(side=tk.RIGHT, padx=5)
@@ -186,11 +193,9 @@ class ConditionEditor(simpledialog.Dialog):
                 widgets['value_var'].set(str(condition_data.get('threshold', '')))
             elif cond_type == 'Heure':
                 widgets['value_var'].set(condition_data.get('value', ''))
-            # Mettre à jour l'état initial des widgets basé sur le type chargé
-            self._on_condition_type_change(widgets)
+            self._on_condition_type_change(widgets) # Met à jour état/valeurs combos op
         else:
-             # Nouvelle ligne, état initial par défaut (probablement type vide ou Capteur)
-             widgets['type_var'].set(CONDITION_TYPES[0]) # Défaut Capteur
+             widgets['type_var'].set(CONDITION_TYPES[0])
              self._on_condition_type_change(widgets)
 
         self._update_scrollregion()
@@ -253,6 +258,13 @@ class ConditionEditor(simpledialog.Dialog):
         logic = self.logic_var.get()
         if not logic: messagebox.showwarning("Validation", "Sélectionnez ET/OU.", parent=self); return 0
 
+        # Permettre 0 condition (désactive la logique SI ou JUSQUÀ)
+        if not self.condition_lines:
+             logging.debug("Validation OK (aucune condition).")
+             self.result_logic = logic
+             self.result_conditions = []
+             return 1 # OK
+
         for i, line_info in enumerate(self.condition_lines):
             widgets = line_info['widgets']; condition_data = {'condition_id': line_info['condition_id']}
             cond_type = widgets['type_var'].get(); operator = widgets['operator_var'].get(); value_str = widgets['value_var'].get().strip()
@@ -286,7 +298,6 @@ class ConditionEditor(simpledialog.Dialog):
 
     def apply(self):
         """Appelé si validate() retourne True."""
-        # Les résultats sont dans self.result_logic et self.result_conditions
         if self.result_logic is not None and self.result_conditions is not None:
              logging.info(f"Apply éditeur règle {self.rule_id}, type {self.condition_type}")
              self.app.update_rule_conditions_from_editor(
@@ -329,11 +340,11 @@ class GreenhouseApp: # Reprise de la classe principale
             rule_data.setdefault('until_logic', 'OU')
             rule_data.setdefault('until_conditions', [])
             rule_data.pop('sensor_id', None); rule_data.pop('operator', None); rule_data.pop('threshold', None); rule_data.pop('until_condition', None)
-            # Assurer que les conditions ont des IDs uniques (pour l'éditeur)
             for cond_list_key in ['conditions', 'until_conditions']:
-                if cond_list_key in rule_data:
+                if cond_list_key in rule_data and isinstance(rule_data[cond_list_key], list):
                     for cond in rule_data[cond_list_key]:
-                        cond.setdefault('condition_id', str(uuid.uuid4()))
+                        if isinstance(cond, dict):
+                             cond.setdefault('condition_id', str(uuid.uuid4()))
             self.rules.append(rule_data)
             rule_counter += 1
         logging.info(f"{len(self.rules)} règles chargées.")
@@ -607,11 +618,9 @@ class GreenhouseApp: # Reprise de la classe principale
             title = f"Modifier Conditions JUSQU'À - '{rule_data.get('name', rule_id)}'"
         else: logging.error(f"Type condition inconnu: {condition_type}"); return
 
-        # Lancer l'éditeur (modal) - La classe ConditionEditor est définie plus haut
+        # Lancer l'éditeur (modal)
         editor = ConditionEditor(self.root, title, rule_id, condition_type, logic, conditions, self.available_sensors, self)
         # La méthode apply() de l'éditeur appellera self.update_rule_conditions_from_editor si OK
-        # Le dialogue est modal, donc le code ici attend sa fermeture.
-        # Pas besoin de récupérer le résultat explicitement car apply() appelle le callback.
 
     # --- Méthode appelée par l'éditeur après clic sur OK ---
     def update_rule_conditions_from_editor(self, rule_id, condition_type, new_logic, new_conditions):
@@ -660,15 +669,23 @@ class GreenhouseApp: # Reprise de la classe principale
              if not self.monitoring_active and (dev_info.get('is_strip') or dev_info.get('is_plug')):
                  tasks_turn_off.append(ctrl.turn_all_outlets_off())
         if tasks_turn_off:
-             logging.info(f"Extinction initiale {len(tasks_turn_off)} Kasa..."); await asyncio.gather(*tasks_turn_off, return_exceptions=True)
+             logging.info(f"Extinction initiale {len(tasks_turn_off)} Kasa...");
+             try:
+                 await asyncio.gather(*tasks_turn_off, return_exceptions=True)
+             except Exception as e_gather:
+                 logging.error(f"Erreur durant gather pour extinction initiale: {e_gather}")
         self.kasa_devices = new_kasa_devices
         logging.info(f"Découverte Kasa: {len(self.kasa_devices)} appareil(s).")
         self.root.after(100, self.refresh_device_lists)
 
     def refresh_device_lists(self):
         logging.info("Rafraîchissement listes périphériques UI...")
-        t_ids=[s.id for s in self.temp_manager.sensors]; l_ids=[hex(a) for a in self.light_manager.get_active_sensors()]
-        self.available_sensors = [(self.get_alias('sensor', sid), sid) for sid in t_ids+l_ids]
+        try: t_ids=[s.id for s in self.temp_manager.sensors]
+        except Exception as e: logging.error(f"Err get temp IDs: {e}"); t_ids=[]
+        try: l_ids=[hex(a) for a in self.light_manager.get_active_sensors()]
+        except Exception as e: logging.error(f"Err get light IDs: {e}"); l_ids=[]
+        self.available_sensors = sorted([(self.get_alias('sensor', sid), sid) for sid in t_ids+l_ids], key=lambda x: x[0]) # Trier par nom
+
         self.available_kasa_strips = []; self.available_outlets = {}
         s_macs = sorted(self.kasa_devices.keys(), key=lambda m: self.get_alias('device', m))
         for mac in s_macs:
@@ -691,8 +708,8 @@ class GreenhouseApp: # Reprise de la classe principale
         except Exception: all_temp = {}
         try: all_light = self.light_manager.read_all_sensors()
         except Exception: all_light = {}
-        ttk.Label(self.scrollable_status_frame, text="Capteurs:",font=('H',10,'b')).grid(row=row_num,column=0,columnspan=4,sticky='w',pady=(5,2)); row_num+=1
-        for alias, s_id in sorted(self.available_sensors, key=lambda x:x[0]):
+        ttk.Label(self.scrollable_status_frame, text="Capteurs:",font=('Helvetica',10,'bold')).grid(row=row_num,column=0,columnspan=4,sticky='w',pady=(5,2)); row_num+=1
+        for alias, s_id in self.available_sensors: # Déjà trié dans refresh_device_lists
             v_txt, unit = "N/A", ""
             is_t, is_l = s_id in all_temp, s_id in all_light
             if is_t: temp=all_temp.get(s_id); v_txt, unit=(f"{temp:.1f}","°C") if temp is not None else ("Err","")
@@ -702,7 +719,7 @@ class GreenhouseApp: # Reprise de la classe principale
             v_lbl=ttk.Label(frm,text=f"{v_txt}{unit}",width=15); v_lbl.pack(side=tk.LEFT,padx=5)
             e_btn=ttk.Button(frm,text="✎",width=2,command=lambda i=s_id,n=alias:self.edit_alias_dialog('sensor',i,n)); e_btn.pack(side=tk.LEFT,padx=2)
             self.status_labels[s_id]={'type':'sensor','label_name':n_lbl,'label_value':v_lbl,'button_edit':e_btn}; row_num+=1
-        ttk.Label(self.scrollable_status_frame, text="Prises Kasa:",font=('H',10,'b')).grid(row=row_num,column=0,columnspan=4,sticky='w',pady=(10,2)); row_num+=1
+        ttk.Label(self.scrollable_status_frame, text="Prises Kasa:",font=('Helvetica',10,'bold')).grid(row=row_num,column=0,columnspan=4,sticky='w',pady=(10,2)); row_num+=1
         for mac in sorted(self.kasa_devices.keys(), key=lambda m: self.get_alias('device',m)):
             data=self.kasa_devices[mac]; d_alias=self.get_alias('device',mac); ip=data.get('ip','?.?.?.?')
             frm_d=ttk.Frame(self.scrollable_status_frame); frm_d.grid(row=row_num,column=0,columnspan=4,sticky='w')
@@ -777,23 +794,41 @@ class GreenhouseApp: # Reprise de la classe principale
         logging.info("Processus arrêt monitoring terminé.")
 
     def _set_rules_ui_state(self, state):
+        # Activer/Désactiver bouton Ajouter Règle
         try:
             main_frame=self.root.winfo_children()[0]; add_btn=next(w for w in main_frame.winfo_children() if isinstance(w,ttk.Button) and "Ajouter" in w.cget("text")); add_btn.config(state=state)
-        except Exception: pass
+        except Exception as e: logging.warning(f"Err config btn Ajouter Règle: {e}")
+
+        # Activer/Désactiver widgets dans chaque règle affichée
         for rule_id, data in self.rule_widgets.items():
             widgets = data.get('widgets',{}); rule_frame = data.get('frame')
             if not rule_frame or not rule_frame.winfo_exists(): continue
-            try: # Bouton Supprimer Regle
-                name_frame = next(iter(w for w in rule_frame.winfo_children() if isinstance(w, ttk.Frame)))
+
+            # Bouton Supprimer Règle
+            try:
+                name_frame = rule_frame.winfo_children()[0] # Suppose que name_frame est le premier enfant
                 del_btn = next(w for w in name_frame.winfo_children() if isinstance(w, ttk.Button) and w.cget('text') == "❌")
                 del_btn.config(state=state)
-            except Exception: pass
+            except Exception as e: logging.warning(f"Err config btn Supprimer Règle {rule_id}: {e}")
+
+            # Boutons d'édition
             for btn_key in ['edit_name_button', 'edit_si_button', 'edit_until_button']:
-                if btn_key in widgets: try: widgets[btn_key].config(state=state)
-                except tk.TclError: pass
+                if btn_key in widgets:
+                    # --- CORRECTION SYNTAXE ICI ---
+                    try:
+                        widgets[btn_key].config(state=state)
+                    except tk.TclError:
+                        pass # Ignorer si widget détruit
+                    # --- FIN CORRECTION ---
+
+            # Widgets ALORS
             for w_key in ['kasa_combo', 'outlet_combo', 'action_combo']:
-                 if w_key in widgets: try: widgets[w_key].config(state=state if state==tk.DISABLED else 'readonly')
-                 except tk.TclError: pass
+                 if w_key in widgets:
+                     try:
+                         widgets[w_key].config(state=state if state==tk.DISABLED else 'readonly')
+                     except tk.TclError:
+                         pass # Ignorer si widget détruit
+
 
     def _run_monitoring_loop(self):
         try: self.asyncio_loop = asyncio.get_event_loop()
@@ -816,7 +851,7 @@ class GreenhouseApp: # Reprise de la classe principale
              await controller._connect()
              if controller._device:
                  states = await controller.get_outlet_state()
-                 if states is not None: return {mac: {o['index']: o['is_on'] for o in states if 'index' in o and 'is_on' in o}} # Utiliser index et is_on
+                 if states is not None: return {mac: {o['index']: o['is_on'] for o in states if 'index' in o and 'is_on' in o}}
                  else: logging.warning(f"État None pour {mac}")
              else: logging.warning(f"Pas co/refresh {mac}")
          except Exception as e: logging.error(f"Err fetch {mac}: {e}"); raise e
@@ -854,7 +889,7 @@ class GreenhouseApp: # Reprise de la classe principale
                 until_met = False
                 if logic == 'ET':
                     all_t = True;
-                    if not conditions: all_t=False # S'il n'y a pas de conditions, ET est faux
+                    if not conditions: all_t=False
                     else:
                         for cond in conditions:
                             if not self._check_condition(cond, sensors, now_time): all_t=False; logging.debug(f"R{rule_id} UNTIL(ET) échoue: {cond}"); break
@@ -872,10 +907,9 @@ class GreenhouseApp: # Reprise de la classe principale
                 r_id = rule.get('id'); mac, idx = rule.get('target_device_mac'), rule.get('target_outlet_index'); action = rule.get('action')
                 if not r_id or mac is None or idx is None or not action: continue
                 key = (mac, idx)
-                # Si une action de retour vient d'être décidée, on ignore le SI pour cette prise
                 if key in desired_states and r_id not in active_until_rules: continue
                 logic = rule.get('trigger_logic', 'ET'); conditions = rule.get('conditions', [])
-                if not conditions: continue # Pas de condition, pas d'action
+                if not conditions: continue
                 trigger_met = False
                 if logic == 'ET':
                     all_t=True;
@@ -893,10 +927,8 @@ class GreenhouseApp: # Reprise de la classe principale
 
                 if trigger_met:
                     logging.debug(f"R{r_id} SI({logic}) MET. Action: {action}")
-                    # Appliquer l'action seulement si aucune action de retour n'est déjà planifiée pour cette prise
                     if key not in desired_states:
                          desired_states[key] = action
-                         # Activer UNTIL si pas déjà actif et si des conditions UNTIL existent
                          if r_id not in active_until_rules and rule.get('until_conditions'):
                              rev_act = 'OFF' if action == 'ON' else 'ON'
                              logging.info(f"R{r_id} Activation UNTIL({rule.get('until_logic','OU')}). Retour: {rev_act}")
@@ -929,13 +961,13 @@ class GreenhouseApp: # Reprise de la classe principale
             if cond_type == 'Capteur':
                 s_id = condition_data.get('id'); thresh = condition_data.get('threshold')
                 if s_id is None or thresh is None or operator not in SENSOR_OPERATORS: logging.warning(f"Cond Capteur invalide (ID:{c_id})"); return False
-                if s_id not in current_sensor_values: logging.debug(f"Val manquante {s_id} (Cond ID:{c_id})"); return False # Condition fausse si valeur manque
+                if s_id not in current_sensor_values: logging.debug(f"Val manquante {s_id} (Cond ID:{c_id})"); return False
                 return self._compare(current_sensor_values[s_id], operator, float(thresh))
             elif cond_type == 'Heure':
                 t_str = condition_data.get('value')
                 if not t_str or operator not in TIME_OPERATORS: logging.warning(f"Cond Heure invalide (ID:{c_id})"); return False
                 target_t = datetime.strptime(t_str, '%H:%M').time()
-                # logging.debug(f"Comp Temps (Cond ID:{c_id}): {current_time_obj:%H:%M:%S} {operator} {target_t:%H:%M}") # Log très verbeux
+                # logging.debug(f"Comp Temps (Cond ID:{c_id}): {current_time_obj:%H:%M:%S} {operator} {target_t:%H:%M}")
                 if operator=='<': return current_time_obj < target_t; elif operator=='>': return current_time_obj > target_t
                 elif operator=='<=': return current_time_obj <= target_t; elif operator=='>=': return current_time_obj >= target_t
                 curr_min=current_time_obj.hour*60+current_time_obj.minute; targ_min=target_t.hour*60+target_t.minute
@@ -949,7 +981,7 @@ class GreenhouseApp: # Reprise de la classe principale
     def _compare(self, value1, operator, value2):
         try:
             v1, v2 = float(value1), float(value2)
-            # logging.debug(f"Comp Num: {v1} {operator} {v2}") # Log très verbeux
+            # logging.debug(f"Comp Num: {v1} {operator} {v2}")
             if operator=='<': return v1 < v2; elif operator=='>': return v1 > v2
             elif operator=='=': return abs(v1-v2)<1e-9; elif operator=='!=': return abs(v1-v2)>=1e-9
             elif operator=='<=': return v1 <= v2; elif operator=='>=': return v1 >= v2
@@ -1000,7 +1032,6 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = GreenhouseApp(root)
     root.mainloop()
-```
 '''
 **Modifications Clés dans ce Code Final :**
 
