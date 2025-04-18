@@ -709,11 +709,11 @@ class GreenhouseApp:
         # --- Section Contrôles (Démarrer/Arrêter/Sauvegarder) ---
         control_frame = ttk.Frame(main_frame, padding="10")
         control_frame.pack(fill=tk.X, expand=False, pady=5)
-        self.start_button = ttk.Button(control_frame, text="🟢 Gérer ma Serre", command=self.start_monitoring)
+        self.start_button = ttk.Button(control_frame, text="Gérer ma Serre", command=self.start_monitoring)
         self.start_button.pack(side=tk.LEFT, padx=5)
-        self.stop_button = ttk.Button(control_frame, text="🔴 Arrêter", command=self.stop_monitoring, state=tk.DISABLED)
+        self.stop_button = ttk.Button(control_frame, text="Arrêter", command=self.stop_monitoring, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, padx=5)
-        save_button = ttk.Button(control_frame, text="💾 Sauvegarder Configuration", command=self.save_configuration)
+        save_button = ttk.Button(control_frame, text="Sauvegarder Configuration", command=self.save_configuration)
         save_button.pack(side=tk.RIGHT, padx=5) # Placé à droite
 
         # --- Panneau Divisé pour Statut et Logs ---

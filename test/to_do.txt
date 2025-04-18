@@ -1,6 +1,7 @@
 reste à :
+
 1. gérer le temps d'éclairage
-2. fermer tout les outlets lorsqu'on arrête gestion serre ou ferme app avec le X
+
 
 6. compléter le requirements.txt
 7. créer un gitignore

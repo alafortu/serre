@@ -44,6 +44,9 @@ Dans le terminal du raspberry pi :
 sudo raspi-config
 
 naviguer à interface options
+
+choisir i2c et l'enable
+
 choisir I7 1-Wire et l'enable
 
 Tu peux aussi aller dans /boot/config.txt
@@ -69,6 +72,18 @@ git pull origin main  #va mettre à jour le code sur le raspberry pi
 cd test #j'ai mis le code de sensor dans les codes tests
 
 python test_temp_sensor.py  #va rouler le code qui lit les températures des sensors de température 
+
+
+---------------------------------------------------------------------
+
+13 avril au soir, va falloir remettre à jour
+
+git pull origin main # met à jour ton code selon dernières mises à jour
+
+pip install -r requirements.txt
+
+
+
 
 
 

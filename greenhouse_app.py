@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timedelta
 
 # Importer les modules personnalisés
-from logger_setup import setup_logging
+from logger_setupbk import setup_logging
 from discover_device import DeviceDiscoverer # Votre classe
 from device_control import DeviceController   # Votre classe
 from temp_sensor_wrapper import TempSensorManager
