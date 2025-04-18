@@ -8,14 +8,29 @@ import logging
 import uuid
 from datetime import datetime, time, timedelta
 import re # Pour la validation de l'heure
+import copy # Pour la copie profonde des conditions
 
 # Importer les modules personnalisés
 from logger_setup import setup_logging
-from discover_device import DeviceDiscoverer # Votre classe
-from device_control import DeviceController   # Votre classe
-from temp_sensor_wrapper import TempSensorManager
-from light_sensor import BH1750Manager # Votre classe
-from config_manager import load_config, save_config
+# Assurez-vous que ces fichiers existent et sont corrects
+try:
+    from discover_device import DeviceDiscoverer
+    from device_control import DeviceController
+    from temp_sensor_wrapper import TempSensorManager
+    from light_sensor import BH1750Manager
+    from config_manager import load_config, save_config
+except ImportError as e:
+    logging.critical(f"Erreur d'importation d'un module requis: {e}. Assurez-vous que tous les fichiers .py sont présents.")
+    # Afficher une erreur à l'utilisateur si tkinter est disponible
+    try:
+        root_err = tk.Tk()
+        root_err.withdraw() # Cacher la fenêtre principale vide
+        messagebox.showerror("Erreur d'Importation", f"Impossible de charger un module nécessaire: {e}\nVérifiez que tous les fichiers .py sont dans le même répertoire.")
+        root_err.destroy()
+    except tk.TclError:
+        pass # Ne peut pas afficher de messagebox si tkinter échoue aussi
+    exit() # Arrêter l'application si les imports échouent
+
 
 # --- Constantes ---
 OPERATORS = ['<', '>', '=', '!=', '<=', '>=']
@@ -25,40 +40,39 @@ ACTIONS = ['ON', 'OFF']
 LOGIC_OPERATORS = ['ET', 'OU'] # 'AND', 'OR'
 CONDITION_TYPES = ['Capteur', 'Heure']
 DEFAULT_CONFIG_FILE = 'config.yaml'
-# Format pour la validation de l'heure
-TIME_REGEX = re.compile(r'^([01]\d|2[0-3]):([0-5]\d)$') # HH:MM (00:00 - 23:59)
+TIME_REGEX = re.compile(r'^([01]\d|2[0-3]):([0-5]\d)$') # HH:MM
 
 #--------------------------------------------------------------------------
 # CLASSE POUR L'ÉDITEUR DE CONDITIONS (POP-UP)
 #--------------------------------------------------------------------------
 class ConditionEditor(simpledialog.Dialog):
+    """Fenêtre modale pour éditer une liste de conditions (SI ou JUSQUÀ)."""
 
     def __init__(self, parent, title, rule_id, condition_type,
                  initial_logic, initial_conditions, available_sensors, app_instance):
         self.rule_id = rule_id
         self.condition_type = condition_type # 'trigger' or 'until'
         self.initial_logic = initial_logic if initial_logic in LOGIC_OPERATORS else LOGIC_OPERATORS[0]
-        # Faire une copie profonde pour éviter de modifier l'original accidentellement
-        self.initial_conditions = [cond.copy() for cond in initial_conditions]
+        # Faire une copie profonde pour éviter de modifier l'original via le pop-up
+        self.initial_conditions = copy.deepcopy(initial_conditions)
         self.available_sensors = available_sensors # [(name, id), ...]
-        self.app = app_instance # Référence à l'instance GreenhouseApp pour callback
+        self.app = app_instance # Référence à GreenhouseApp pour get_alias
 
-        # Pour stocker les widgets de chaque ligne de condition
-        self.condition_lines = [] # Liste de dictionnaires {'frame': ttk.Frame, 'widgets': dict, 'condition_id': str}
-
-        # Pour stocker le résultat
+        self.condition_lines = [] # Liste de dict: {'frame': ttk.Frame, 'widgets': dict, 'condition_id': str}
         self.result_logic = None
         self.result_conditions = None
 
-        super().__init__(parent, title=title)
+        # Pour s'assurer que les IDs de condition sont uniques dans cette session d'édition
+        self.condition_id_counter = 0
 
+        super().__init__(parent, title=title)
 
     def body(self, master):
         """Crée le contenu du corps de la boîte de dialogue."""
         dialog_frame = ttk.Frame(master, padding="10")
         dialog_frame.pack(fill=tk.BOTH, expand=True)
 
-        # --- Logique Globale (ET/OU) ---
+        # Logique Globale (ET/OU)
         logic_frame = ttk.Frame(dialog_frame)
         logic_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 10))
         ttk.Label(logic_frame, text="Logique entre conditions:").pack(side=tk.LEFT, padx=(0, 5))
@@ -66,48 +80,60 @@ class ConditionEditor(simpledialog.Dialog):
         self.logic_combo = ttk.Combobox(logic_frame, textvariable=self.logic_var, values=LOGIC_OPERATORS, state="readonly", width=5)
         self.logic_combo.pack(side=tk.LEFT)
 
-        # --- Zone Scrollable pour les Conditions ---
+        # Zone Scrollable pour les Conditions
         conditions_container = ttk.Frame(dialog_frame)
         conditions_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
         self.conditions_canvas = tk.Canvas(conditions_container, borderwidth=0, highlightthickness=0)
         scrollbar = ttk.Scrollbar(conditions_container, orient="vertical", command=self.conditions_canvas.yview)
-        self.scrollable_conditions_frame = ttk.Frame(self.conditions_canvas) # Frame interne
-
-        self.scrollable_conditions_frame.bind(
-            "<Configure>",
-            lambda e: self.conditions_canvas.configure(scrollregion=self.conditions_canvas.bbox("all"))
-        )
-
-        self.conditions_canvas.create_window((0, 0), window=self.scrollable_conditions_frame, anchor="nw")
+        self.scrollable_conditions_frame = ttk.Frame(self.conditions_canvas)
+        self.scrollable_conditions_frame.bind("<Configure>", self._on_frame_configure)
+        self.canvas_window = self.conditions_canvas.create_window((0, 0), window=self.scrollable_conditions_frame, anchor="nw")
         self.conditions_canvas.configure(yscrollcommand=scrollbar.set)
-
         self.conditions_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # Lier la molette de la souris au canvas (sur Linux/Windows)
+        self.conditions_canvas.bind_all("<MouseWheel>", self._on_mousewheel) # Windows
+        self.conditions_canvas.bind_all("<Button-4>", self._on_mousewheel) # Linux scroll up
+        self.conditions_canvas.bind_all("<Button-5>", self._on_mousewheel) # Linux scroll down
 
         # Peupler les conditions initiales
         if not self.initial_conditions:
-             # Ajouter une ligne vide si aucune condition n'existe
              self._add_condition_line()
         else:
             for condition_data in self.initial_conditions:
                 self._add_condition_line(condition_data)
 
-        # --- Bouton Ajouter Condition ---
+        # Bouton Ajouter Condition
         add_button_frame = ttk.Frame(dialog_frame)
         add_button_frame.pack(side=tk.TOP, fill=tk.X, pady=(10, 0))
         add_button = ttk.Button(add_button_frame, text="➕ Ajouter Condition", command=self._add_condition_line)
         add_button.pack()
 
-        # Ajuster la taille initiale du pop-up (peut nécessiter ajustement)
-        self.geometry("750x450") # Largeur x Hauteur
+        # Ajuster la taille initiale du pop-up
+        self.geometry("750x450")
+        self.resizable(True, True) # Permettre redimensionnement
 
-        # Centrer le canvas initialement
+        self._update_scrollregion() # Mise à jour initiale
+
+        return self.logic_combo # Focus initial
+
+    def _on_frame_configure(self, event=None):
+        """Met à jour la scrollregion quand le frame interne change de taille."""
+        self.conditions_canvas.configure(scrollregion=self.conditions_canvas.bbox("all"))
+
+    def _on_mousewheel(self, event):
+        """Gère le défilement avec la molette."""
+        # Adapter la direction et l'unité selon le système
+        if event.num == 5 or event.delta < 0: # Scroll down
+            self.conditions_canvas.yview_scroll(1, "units")
+        elif event.num == 4 or event.delta > 0: # Scroll up
+            self.conditions_canvas.yview_scroll(-1, "units")
+
+    def _update_scrollregion(self):
+        """Force la mise à jour de la scrollregion."""
         self.scrollable_conditions_frame.update_idletasks()
         self.conditions_canvas.configure(scrollregion=self.conditions_canvas.bbox("all"))
 
-        # Retourner le widget qui doit avoir le focus initial (optionnel)
-        # return self.logic_combo
 
     def _add_condition_line(self, condition_data=None):
         """Ajoute une ligne de widgets pour une condition."""
@@ -115,234 +141,158 @@ class ConditionEditor(simpledialog.Dialog):
         line_frame.pack(fill=tk.X, expand=True, pady=1)
 
         widgets = {}
-        condition_id = condition_data.get('condition_id', str(uuid.uuid4())) if condition_data else str(uuid.uuid4())
+        # Utiliser l'ID existant ou en générer un nouveau
+        condition_id = condition_data.get('condition_id', f"new_{self.condition_id_counter}") if condition_data else f"new_{self.condition_id_counter}"
+        self.condition_id_counter += 1
 
-        # --- Type (Capteur/Heure) ---
+        # Type (Capteur/Heure)
         widgets['type_var'] = tk.StringVar()
         widgets['type_combo'] = ttk.Combobox(line_frame, textvariable=widgets['type_var'], values=CONDITION_TYPES, state="readonly", width=8)
         widgets['type_combo'].pack(side=tk.LEFT, padx=2)
-        # Lier le changement de type pour adapter l'UI de la ligne
-        widgets['type_combo'].bind('<<ComboboxSelected>>', lambda e, lw=widgets, lf=line_frame: self._on_condition_type_change(lw, lf))
+        widgets['type_combo'].bind('<<ComboboxSelected>>', lambda e, lw=widgets: self._on_condition_type_change(lw))
 
-        # --- Capteur (si type='Capteur') ---
+        # Capteur
         widgets['sensor_var'] = tk.StringVar()
-        widgets['sensor_combo'] = ttk.Combobox(line_frame, textvariable=widgets['sensor_var'],
-                                                values=[name for name, _id in self.available_sensors], state="disabled", width=20)
+        sensor_names = [""] + [name for name, _id in self.available_sensors] # Ajouter option vide
+        widgets['sensor_combo'] = ttk.Combobox(line_frame, textvariable=widgets['sensor_var'], values=sensor_names, state="disabled", width=20)
         widgets['sensor_combo'].pack(side=tk.LEFT, padx=2)
 
-        # --- Opérateur ---
+        # Opérateur
         widgets['operator_var'] = tk.StringVar()
         widgets['operator_combo'] = ttk.Combobox(line_frame, textvariable=widgets['operator_var'], values=OPERATORS, state="readonly", width=4)
         widgets['operator_combo'].pack(side=tk.LEFT, padx=2)
 
-        # --- Valeur (pour Capteur ou Heure) ---
+        # Valeur
         widgets['value_var'] = tk.StringVar()
-        # Mettre une largeur plus grande pour HH:MM ou floats
         widgets['value_entry'] = ttk.Entry(line_frame, textvariable=widgets['value_var'], width=10)
         widgets['value_entry'].pack(side=tk.LEFT, padx=2)
 
-        # --- Bouton Supprimer Ligne ---
-        # Utiliser une sous-fonction lambda pour capturer le line_frame actuel
+        # Bouton Supprimer Ligne
         delete_button = ttk.Button(line_frame, text="➖", width=2, style="Red.TButton",
                                     command=lambda frame=line_frame: self._delete_condition_line(frame))
         delete_button.pack(side=tk.RIGHT, padx=5)
 
-        # Stocker les infos de la ligne
         line_info = {'frame': line_frame, 'widgets': widgets, 'condition_id': condition_id}
         self.condition_lines.append(line_info)
 
-        # Peupler si des données existent
         if condition_data:
             cond_type = condition_data.get('type')
             widgets['type_var'].set(cond_type if cond_type in CONDITION_TYPES else '')
             widgets['operator_var'].set(condition_data.get('operator', ''))
-
             if cond_type == 'Capteur':
                 sensor_id = condition_data.get('id')
                 sensor_name = self.app.get_alias('sensor', sensor_id) if sensor_id else ''
-                widgets['sensor_var'].set(sensor_name)
+                widgets['sensor_var'].set(sensor_name if sensor_name in sensor_names else "")
                 widgets['value_var'].set(str(condition_data.get('threshold', '')))
-                # Activer le combobox capteur
-                widgets['sensor_combo'].config(state="readonly")
-                widgets['operator_combo'].config(values=SENSOR_OPERATORS) # S'assurer que les bons opérateurs sont là
-                # Configurer l'entry pour nombres
-                # (Pourrait ajouter validation numérique ici si souhaité)
-
             elif cond_type == 'Heure':
                 widgets['value_var'].set(condition_data.get('value', ''))
-                # Désactiver le combobox capteur
-                widgets['sensor_combo'].config(state="disabled")
-                widgets['sensor_var'].set('') # Vider le champ capteur
-                widgets['operator_combo'].config(values=TIME_OPERATORS) # S'assurer que les bons opérateurs sont là
-                # Configurer l'entry pour HH:MM
-                # (Pourrait ajouter validation format ici si souhaité)
-            else:
-                 # Type inconnu ou non défini, désactiver tout sauf type
-                 widgets['sensor_combo'].config(state="disabled")
-                 widgets['operator_combo'].config(values=OPERATORS)
-
+            # Mettre à jour l'état initial des widgets basé sur le type chargé
+            self._on_condition_type_change(widgets)
         else:
-             # Ligne nouvelle/vide, forcer l'appel pour configurer l'état initial
-             self._on_condition_type_change(widgets, line_frame)
+             # Nouvelle ligne, état initial par défaut (probablement type vide ou Capteur)
+             widgets['type_var'].set(CONDITION_TYPES[0]) # Défaut Capteur
+             self._on_condition_type_change(widgets)
+
+        self._update_scrollregion()
 
 
-        # Mettre à jour la scrollregion
-        self.scrollable_conditions_frame.update_idletasks()
-        self.conditions_canvas.configure(scrollregion=self.conditions_canvas.bbox("all"))
-
-
-    def _on_condition_type_change(self, line_widgets, line_frame):
-        """Adapte l'UI d'une ligne quand le type de condition change."""
+    def _on_condition_type_change(self, line_widgets):
+        """Adapte l'UI d'une ligne quand le type change."""
         selected_type = line_widgets['type_var'].get()
+        current_op = line_widgets['operator_var'].get()
 
         if selected_type == 'Capteur':
             line_widgets['sensor_combo'].config(state="readonly")
-            line_widgets['value_entry'].config(state="normal") # Entry pour seuil numérique
+            line_widgets['value_entry'].config(state="normal")
             line_widgets['operator_combo'].config(values=SENSOR_OPERATORS)
-            # Vider la valeur si elle contenait une heure ?
+            if current_op not in SENSOR_OPERATORS: line_widgets['operator_var'].set('')
             if ':' in line_widgets['value_var'].get(): line_widgets['value_var'].set('')
-
         elif selected_type == 'Heure':
-            line_widgets['sensor_combo'].config(state="disabled")
-            line_widgets['sensor_var'].set("") # Vider le nom du capteur
-            line_widgets['value_entry'].config(state="normal") # Entry pour HH:MM
+            line_widgets['sensor_combo'].config(state="disabled"); line_widgets['sensor_var'].set("")
+            line_widgets['value_entry'].config(state="normal")
             line_widgets['operator_combo'].config(values=TIME_OPERATORS)
-            # Vider la valeur si elle contenait un nombre ?
+            if current_op not in TIME_OPERATORS: line_widgets['operator_var'].set('')
             try: float(line_widgets['value_var'].get()); line_widgets['value_var'].set('')
-            except ValueError: pass # Ce n'était pas un nombre, ok
-
-        else: # Aucun type sélectionné ou type inconnu
-            line_widgets['sensor_combo'].config(state="disabled")
-            line_widgets['sensor_var'].set("")
-            line_widgets['value_entry'].config(state="disabled")
-            line_widgets['value_var'].set("")
+            except ValueError: pass
+        else:
+            line_widgets['sensor_combo'].config(state="disabled"); line_widgets['sensor_var'].set("")
+            line_widgets['value_entry'].config(state="disabled"); line_widgets['value_var'].set("")
             line_widgets['operator_combo'].config(values=OPERATORS)
-
-        # Réinitialiser l'opérateur si la liste a changé
-        if line_widgets['operator_var'].get() not in line_widgets['operator_combo']['values']:
-             line_widgets['operator_var'].set('')
+            line_widgets['operator_var'].set('')
 
 
     def _delete_condition_line(self, line_frame_to_delete):
-        """Supprime une ligne de condition de l'UI et de la liste interne."""
-        # Trouver l'index de la ligne à supprimer
+        """Supprime une ligne de condition."""
         index_to_delete = -1
         for i, line_info in enumerate(self.condition_lines):
             if line_info['frame'] == line_frame_to_delete:
-                index_to_delete = i
-                break
-
+                index_to_delete = i; break
         if index_to_delete != -1:
-            # Supprimer de la liste interne
             del self.condition_lines[index_to_delete]
-            # Détruire le frame de l'UI
             line_frame_to_delete.destroy()
-            # Mettre à jour la scrollregion
-            self.scrollable_conditions_frame.update_idletasks()
-            self.conditions_canvas.configure(scrollregion=self.conditions_canvas.bbox("all"))
-            logging.debug(f"Ligne de condition {index_to_delete} supprimée.")
-        else:
-            logging.warning("Tentative de suppression d'une ligne de condition non trouvée.")
+            self._update_scrollregion()
+            logging.debug(f"Ligne condition {index_to_delete} supprimée.")
+        else: logging.warning("Tentative suppression ligne condition non trouvée.")
+
+    def buttonbox(self):
+        """Crée les boutons OK et Annuler."""
+        box = ttk.Frame(self)
+        ok_button = ttk.Button(box, text="OK", width=10, command=self.ok, default=tk.ACTIVE)
+        ok_button.pack(side=tk.LEFT, padx=5, pady=5)
+        cancel_button = ttk.Button(box, text="Annuler", width=10, command=self.cancel)
+        cancel_button.pack(side=tk.LEFT, padx=5, pady=5)
+        self.bind("<Return>", self.ok)
+        self.bind("<Escape>", self.cancel)
+        box.pack()
 
 
     def validate(self):
-        """Valide les données saisies avant de fermer avec OK."""
-        logging.debug("Validation de l'éditeur de conditions...")
-        self.result_conditions = [] # Réinitialiser avant validation
+        """Valide les données avant de fermer avec OK."""
+        logging.debug("Validation éditeur conditions...")
+        validated_conditions = []
         logic = self.logic_var.get()
-        if not logic:
-             messagebox.showwarning("Validation échouée", "Veuillez sélectionner une logique globale (ET/OU).", parent=self)
-             return 0 # Empêche la fermeture
-
-        if not self.condition_lines:
-             # Permettre 0 condition? Oui, ça désactive la partie SI ou JUSQUÀ
-             logging.debug("Validation OK (aucune condition).")
-             self.result_logic = logic
-             self.result_conditions = []
-             return 1 # OK
+        if not logic: messagebox.showwarning("Validation", "Sélectionnez ET/OU.", parent=self); return 0
 
         for i, line_info in enumerate(self.condition_lines):
-            widgets = line_info['widgets']
-            condition_data = {'condition_id': line_info['condition_id']} # Garder l'ID
+            widgets = line_info['widgets']; condition_data = {'condition_id': line_info['condition_id']}
+            cond_type = widgets['type_var'].get(); operator = widgets['operator_var'].get(); value_str = widgets['value_var'].get().strip()
 
-            cond_type = widgets['type_var'].get()
-            operator = widgets['operator_var'].get()
-            value_str = widgets['value_var'].get().strip()
-
-            if not cond_type:
-                messagebox.showwarning("Validation échouée", f"Ligne {i+1}: Veuillez sélectionner un type (Capteur/Heure).", parent=self)
-                return 0
+            if not cond_type: messagebox.showwarning("Validation", f"Ligne {i+1}: Sélectionnez un type.", parent=self); return 0
             condition_data['type'] = cond_type
-
-            if not operator:
-                 messagebox.showwarning("Validation échouée", f"Ligne {i+1}: Veuillez sélectionner un opérateur.", parent=self)
-                 return 0
+            if not operator: messagebox.showwarning("Validation", f"Ligne {i+1}: Sélectionnez un opérateur.", parent=self); return 0
             condition_data['operator'] = operator
-
-            if not value_str:
-                messagebox.showwarning("Validation échouée", f"Ligne {i+1}: Veuillez entrer une valeur.", parent=self)
-                return 0
+            if not value_str: messagebox.showwarning("Validation", f"Ligne {i+1}: Entrez une valeur.", parent=self); return 0
 
             if cond_type == 'Capteur':
                 sensor_name = widgets['sensor_var'].get()
-                if not sensor_name:
-                     messagebox.showwarning("Validation échouée", f"Ligne {i+1}: Veuillez sélectionner un capteur.", parent=self)
-                     return 0
-                # Trouver l'ID du capteur basé sur le nom
+                if not sensor_name: messagebox.showwarning("Validation", f"Ligne {i+1}: Sélectionnez un capteur.", parent=self); return 0
                 sensor_id = next((sid for name, sid in self.available_sensors if name == sensor_name), None)
-                if not sensor_id:
-                    messagebox.showwarning("Validation échouée", f"Ligne {i+1}: Capteur '{sensor_name}' invalide ou non trouvé.", parent=self)
-                    return 0
+                if not sensor_id: messagebox.showwarning("Validation", f"Ligne {i+1}: Capteur '{sensor_name}' invalide.", parent=self); return 0
                 condition_data['id'] = sensor_id
-
-                # Valider la valeur comme float
-                try:
-                    threshold = float(value_str.replace(',', '.'))
-                    condition_data['threshold'] = threshold
-                except ValueError:
-                     messagebox.showwarning("Validation échouée", f"Ligne {i+1}: La valeur du seuil '{value_str}' doit être un nombre.", parent=self)
-                     return 0
-                # Valider opérateur pour capteur
-                if operator not in SENSOR_OPERATORS:
-                     messagebox.showwarning("Validation échouée", f"Ligne {i+1}: Opérateur '{operator}' invalide pour un capteur.", parent=self)
-                     return 0
-
+                try: condition_data['threshold'] = float(value_str.replace(',', '.'))
+                except ValueError: messagebox.showwarning("Validation", f"Ligne {i+1}: Seuil '{value_str}' invalide (nombre attendu).", parent=self); return 0
+                if operator not in SENSOR_OPERATORS: messagebox.showwarning("Validation", f"Ligne {i+1}: Opérateur '{operator}' invalide pour capteur.", parent=self); return 0
             elif cond_type == 'Heure':
-                # Valider le format HH:MM
-                if not TIME_REGEX.match(value_str):
-                    messagebox.showwarning("Validation échouée", f"Ligne {i+1}: La valeur d'heure '{value_str}' doit être au format HH:MM (ex: 06:30, 22:00).", parent=self)
-                    return 0
-                condition_data['value'] = value_str
-                condition_data['id'] = None # Pas d'ID pour l'heure
+                if not TIME_REGEX.match(value_str): messagebox.showwarning("Validation", f"Ligne {i+1}: Heure '{value_str}' invalide (format HH:MM).", parent=self); return 0
+                condition_data['value'] = value_str; condition_data['id'] = None
+                if operator not in TIME_OPERATORS: messagebox.showwarning("Validation", f"Ligne {i+1}: Opérateur '{operator}' invalide pour heure.", parent=self); return 0
 
-                # Valider opérateur pour heure
-                if operator not in TIME_OPERATORS:
-                     messagebox.showwarning("Validation échouée", f"Ligne {i+1}: Opérateur '{operator}' invalide pour une heure.", parent=self)
-                     return 0
+            validated_conditions.append(condition_data)
 
-            # Ajouter la condition validée à la liste des résultats
-            self.result_conditions.append(condition_data)
-
-        # Si on arrive ici, tout est valide
         self.result_logic = logic
-        logging.debug(f"Validation OK. Logique: {self.result_logic}, Conditions: {self.result_conditions}")
-        return 1 # Permet la fermeture
+        self.result_conditions = validated_conditions
+        logging.debug(f"Validation OK. Logique: {self.result_logic}, Conds: {len(self.result_conditions)}")
+        return 1 # Validation réussie
 
     def apply(self):
-        """Appelé si validate() retourne True (quand OK est cliqué)."""
-        # Les résultats ont été stockés dans self.result_logic et self.result_conditions par validate()
-        # On appelle la méthode de l'application principale pour mettre à jour la règle
+        """Appelé si validate() retourne True."""
+        # Les résultats sont dans self.result_logic et self.result_conditions
         if self.result_logic is not None and self.result_conditions is not None:
-             logging.info(f"Application des changements de l'éditeur pour règle {self.rule_id}, type {self.condition_type}")
+             logging.info(f"Apply éditeur règle {self.rule_id}, type {self.condition_type}")
              self.app.update_rule_conditions_from_editor(
-                 self.rule_id,
-                 self.condition_type,
-                 self.result_logic,
-                 self.result_conditions
+                 self.rule_id, self.condition_type, self.result_logic, self.result_conditions
              )
-        else:
-             # Ne devrait pas arriver si validate passe, mais sécurité
-             logging.error("Erreur: apply() appelé mais les résultats de validation manquent.")
+        else: logging.error("Apply appelé sans résultats de validation.")
 
 #--------------------------------------------------------------------------
 # FIN CLASSE ConditionEditor
@@ -354,7 +304,7 @@ class GreenhouseApp: # Reprise de la classe principale
     def __init__(self, root):
         self.root = root
         self.root.title("Gestionnaire de Serre")
-        try: self.root.geometry("1300x800") # Taille peut être ajustée maintenant
+        try: self.root.geometry("1300x800")
         except tk.TclError as e: logging.warning(f"Geo init err: {e}")
 
         style = ttk.Style(self.root)
@@ -378,24 +328,20 @@ class GreenhouseApp: # Reprise de la classe principale
             rule_data.setdefault('conditions', [])
             rule_data.setdefault('until_logic', 'OU')
             rule_data.setdefault('until_conditions', [])
-            # Nettoyage anciens champs
             rule_data.pop('sensor_id', None); rule_data.pop('operator', None); rule_data.pop('threshold', None); rule_data.pop('until_condition', None)
+            # Assurer que les conditions ont des IDs uniques (pour l'éditeur)
+            for cond_list_key in ['conditions', 'until_conditions']:
+                if cond_list_key in rule_data:
+                    for cond in rule_data[cond_list_key]:
+                        cond.setdefault('condition_id', str(uuid.uuid4()))
             self.rules.append(rule_data)
             rule_counter += 1
         logging.info(f"{len(self.rules)} règles chargées.")
 
-        self.kasa_devices = {}
-        self.temp_manager = TempSensorManager()
-        self.light_manager = BH1750Manager()
-        self.available_sensors = []
-        self.available_kasa_strips = []
-        self.available_outlets = {}
-        self.monitoring_active = False
-        self.monitoring_thread = None
-        self.asyncio_loop = None
-        self.ui_update_job = None
-        self.live_kasa_states = {}
-        self.rule_widgets = {}
+        self.kasa_devices = {}; self.temp_manager = TempSensorManager(); self.light_manager = BH1750Manager()
+        self.available_sensors = []; self.available_kasa_strips = []; self.available_outlets = {}
+        self.monitoring_active = False; self.monitoring_thread = None; self.asyncio_loop = None
+        self.ui_update_job = None; self.live_kasa_states = {}; self.rule_widgets = {}
 
         self.create_widgets()
         self.populate_initial_ui_data()
@@ -403,7 +349,7 @@ class GreenhouseApp: # Reprise de la classe principale
         self.discover_all_devices()
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-    # --- Fonctions Alias (identiques) ---
+    # --- Fonctions Alias (inchangées) ---
     def get_alias(self, item_type, item_id, sub_id=None):
         try:
             if item_type == 'sensor': return self.aliases.get('sensors', {}).get(str(item_id), str(item_id))
@@ -661,9 +607,11 @@ class GreenhouseApp: # Reprise de la classe principale
             title = f"Modifier Conditions JUSQU'À - '{rule_data.get('name', rule_id)}'"
         else: logging.error(f"Type condition inconnu: {condition_type}"); return
 
-        # Lancer l'éditeur (modal)
+        # Lancer l'éditeur (modal) - La classe ConditionEditor est définie plus haut
         editor = ConditionEditor(self.root, title, rule_id, condition_type, logic, conditions, self.available_sensors, self)
         # La méthode apply() de l'éditeur appellera self.update_rule_conditions_from_editor si OK
+        # Le dialogue est modal, donc le code ici attend sa fermeture.
+        # Pas besoin de récupérer le résultat explicitement car apply() appelle le callback.
 
     # --- Méthode appelée par l'éditeur après clic sur OK ---
     def update_rule_conditions_from_editor(self, rule_id, condition_type, new_logic, new_conditions):
@@ -673,25 +621,19 @@ class GreenhouseApp: # Reprise de la classe principale
 
         logging.info(f"Màj conditions {condition_type} pour règle {rule_id}. Logique: {new_logic}, Conditions: {len(new_conditions)}")
 
-        # Mettre à jour les données internes
+        widgets = self.rule_widgets.get(rule_id, {}).get('widgets', {})
         if condition_type == 'trigger':
             rule_data['trigger_logic'] = new_logic
             rule_data['conditions'] = new_conditions
-            # Mettre à jour le label résumé dans l'UI
-            if rule_id in self.rule_widgets and 'si_summary_label' in self.rule_widgets[rule_id]['widgets']:
-                 try:
-                     self.rule_widgets[rule_id]['widgets']['si_summary_label'].config(text=self._generate_condition_summary(new_conditions, new_logic))
-                 except tk.TclError: pass # Widget peut avoir été détruit
-
+            if 'si_summary_label' in widgets:
+                 try: widgets['si_summary_label'].config(text=self._generate_condition_summary(new_conditions, new_logic))
+                 except tk.TclError: pass
         elif condition_type == 'until':
             rule_data['until_logic'] = new_logic
             rule_data['until_conditions'] = new_conditions
-             # Mettre à jour le label résumé dans l'UI
-            if rule_id in self.rule_widgets and 'until_summary_label' in self.rule_widgets[rule_id]['widgets']:
-                 try:
-                     self.rule_widgets[rule_id]['widgets']['until_summary_label'].config(text=self._generate_condition_summary(new_conditions, new_logic))
+            if 'until_summary_label' in widgets:
+                 try: widgets['until_summary_label'].config(text=self._generate_condition_summary(new_conditions, new_logic))
                  except tk.TclError: pass
-
 
     # --- Découverte / Rafraichissement (inchangées) ---
     def discover_all_devices(self):
@@ -779,21 +721,13 @@ class GreenhouseApp: # Reprise de la classe principale
         self.scrollable_status_frame.update_idletasks(); status_canvas=self.scrollable_status_frame.master; status_canvas.configure(scrollregion=status_canvas.bbox("all"))
 
     def schedule_periodic_updates(self): self.update_live_status(); self.ui_update_job = self.root.after(5000, self.schedule_periodic_updates)
-    
+
     def cancel_periodic_updates(self):
-        """Annule la mise à jour périodique de l'UI."""
         if self.ui_update_job:
-            try:
-                # Essayer d'annuler la tâche planifiée
-                self.root.after_cancel(self.ui_update_job)
-                logging.debug(f"Tâche UI périodique {self.ui_update_job} annulée.")
-            except tk.TclError as e:
-                # Peut arriver si l'ID n'est plus valide (rare)
-                logging.warning(f"Erreur lors de l'annulation de la tâche UI {self.ui_update_job}: {e}")
-            finally:
-                 # Assurer que la variable est réinitialisée même en cas d'erreur d'annulation
-                self.ui_update_job = None
-    
+            try: self.root.after_cancel(self.ui_update_job); logging.debug(f"Tâche UI {self.ui_update_job} annulée.")
+            except tk.TclError as e: logging.warning(f"Err cancel tâche UI {self.ui_update_job}: {e}")
+            finally: self.ui_update_job = None
+
     def update_live_status(self):
         if not self.monitoring_active: return
         logging.debug("MàJ live status UI...")
@@ -826,7 +760,7 @@ class GreenhouseApp: # Reprise de la classe principale
         self.start_button.config(state=tk.DISABLED); self.stop_button.config(state=tk.NORMAL)
         self._set_rules_ui_state(tk.DISABLED)
         self.live_kasa_states = {}
-        self.monitoring_thread = threading.Thread(target=self._run_monitoring_loop, daemon=True); self.monitoring_thread.start()
+        self.monitoring_thread = threading.Thread(target=self._run_monitoring_loop, name="MonitoringThread", daemon=True); self.monitoring_thread.start()
         self.schedule_periodic_updates()
 
     def stop_monitoring(self):
@@ -839,7 +773,7 @@ class GreenhouseApp: # Reprise de la classe principale
         self.start_button.config(state=tk.NORMAL); self.stop_button.config(state=tk.DISABLED)
         self._set_rules_ui_state(tk.NORMAL)
         self.cancel_periodic_updates()
-        logging.info("Extinction sécurité Kasa..."); threading.Thread(target=self._turn_off_all_kasa_safely, daemon=True).start()
+        logging.info("Extinction sécurité Kasa..."); threading.Thread(target=self._turn_off_all_kasa_safely, name="ShutdownKasaThread", daemon=True).start()
         logging.info("Processus arrêt monitoring terminé.")
 
     def _set_rules_ui_state(self, state):
@@ -882,7 +816,7 @@ class GreenhouseApp: # Reprise de la classe principale
              await controller._connect()
              if controller._device:
                  states = await controller.get_outlet_state()
-                 if states is not None: return {mac: {o['index']: o['is_on'] for o in states if 'i' in o and 'o' in o}} # Shortened keys for debug
+                 if states is not None: return {mac: {o['index']: o['is_on'] for o in states if 'index' in o and 'is_on' in o}} # Utiliser index et is_on
                  else: logging.warning(f"État None pour {mac}")
              else: logging.warning(f"Pas co/refresh {mac}")
          except Exception as e: logging.error(f"Err fetch {mac}: {e}"); raise e
@@ -918,13 +852,15 @@ class GreenhouseApp: # Reprise de la classe principale
                 key = (mac, idx); logic = rule.get('until_logic', 'OU'); conditions = rule.get('until_conditions', [])
                 if not conditions: del active_until_rules[rule_id]; continue
                 until_met = False
-                if logic == 'ET': all_t = True; if not conditions: all_t=False;
-                else:
-                    for cond in conditions:
-                        if not self._check_condition(cond, sensors, now_time): all_t=False; logging.debug(f"R{rule_id} UNTIL(ET) échoue: {cond}"); break
+                if logic == 'ET':
+                    all_t = True;
+                    if not conditions: all_t=False # S'il n'y a pas de conditions, ET est faux
+                    else:
+                        for cond in conditions:
+                            if not self._check_condition(cond, sensors, now_time): all_t=False; logging.debug(f"R{rule_id} UNTIL(ET) échoue: {cond}"); break
                     until_met = all_t
-                elif logic == 'OU': any_t = False
-                else:
+                elif logic == 'OU':
+                    any_t = False;
                     for cond in conditions:
                         if self._check_condition(cond, sensors, now_time): any_t=True; logging.debug(f"R{rule_id} UNTIL(OU) réussit: {cond}"); break
                     until_met = any_t
@@ -936,17 +872,20 @@ class GreenhouseApp: # Reprise de la classe principale
                 r_id = rule.get('id'); mac, idx = rule.get('target_device_mac'), rule.get('target_outlet_index'); action = rule.get('action')
                 if not r_id or mac is None or idx is None or not action: continue
                 key = (mac, idx)
-                if key in desired_states and r_id not in active_until_rules: continue # Revert prioritaire
+                # Si une action de retour vient d'être décidée, on ignore le SI pour cette prise
+                if key in desired_states and r_id not in active_until_rules: continue
                 logic = rule.get('trigger_logic', 'ET'); conditions = rule.get('conditions', [])
-                if not conditions: continue
+                if not conditions: continue # Pas de condition, pas d'action
                 trigger_met = False
-                if logic == 'ET': all_t=True; if not conditions: all_t=False;
-                else:
-                    for cond in conditions:
-                        if not self._check_condition(cond, sensors, now_time): all_t=False; logging.debug(f"R{r_id} SI(ET) échoue: {cond}"); break
+                if logic == 'ET':
+                    all_t=True;
+                    if not conditions: all_t=False
+                    else:
+                        for cond in conditions:
+                            if not self._check_condition(cond, sensors, now_time): all_t=False; logging.debug(f"R{r_id} SI(ET) échoue: {cond}"); break
                     trigger_met = all_t
-                elif logic == 'OU': any_t=False;
-                else:
+                elif logic == 'OU':
+                    any_t=False;
                     for cond in conditions:
                         if self._check_condition(cond, sensors, now_time): any_t=True; logging.debug(f"R{r_id} SI(OU) réussit: {cond}"); break
                     trigger_met = any_t
@@ -954,14 +893,16 @@ class GreenhouseApp: # Reprise de la classe principale
 
                 if trigger_met:
                     logging.debug(f"R{r_id} SI({logic}) MET. Action: {action}")
+                    # Appliquer l'action seulement si aucune action de retour n'est déjà planifiée pour cette prise
                     if key not in desired_states:
                          desired_states[key] = action
+                         # Activer UNTIL si pas déjà actif et si des conditions UNTIL existent
                          if r_id not in active_until_rules and rule.get('until_conditions'):
                              rev_act = 'OFF' if action == 'ON' else 'ON'
                              logging.info(f"R{r_id} Activation UNTIL({rule.get('until_logic','OU')}). Retour: {rev_act}")
                              active_until_rules[r_id] = {'revert_action': rev_act}
 
-            # Appliquer changements Kasa (inchangé)
+            # Appliquer changements Kasa
             all_managed = set((r.get('target_device_mac'), r.get('target_outlet_index')) for r in rules if r.get('target_device_mac') and r.get('target_outlet_index') is not None)
             for key, state in desired_states.items():
                  mac, idx = key; live = self.live_kasa_states.get(mac, {}).get(idx)
@@ -969,13 +910,13 @@ class GreenhouseApp: # Reprise de la classe principale
                  if state=='ON' and live is not True: needed,func=True,'turn_outlet_on'
                  elif state=='OFF' and live is not False: needed,func=True,'turn_outlet_off'
                  if needed:
-                     if mac in self.kasa_devices: ctrl=self.kasa_devices[mac]['controller']; logging.info(f"Action: {self.get_alias('dev',mac)} P{self.get_alias('out',mac,idx)} -> {func}"); tasks_to_run.append(getattr(ctrl,func)(idx)); self.live_kasa_states.setdefault(mac,{})[idx]=(state=='ON')
+                     if mac in self.kasa_devices: ctrl=self.kasa_devices[mac]['controller']; logging.info(f"Action: {self.get_alias('device',mac)} P{self.get_alias('outlet',mac,idx)} -> {func}"); tasks_to_run.append(getattr(ctrl,func)(idx)); self.live_kasa_states.setdefault(mac,{})[idx]=(state=='ON')
                      else: logging.error(f"{mac} inconnu pour {func}.")
             for mac, outs in self.live_kasa_states.items():
                  for idx, is_on in outs.items():
                      key=(mac,idx)
                      if key in all_managed and key not in desired_states and is_on:
-                         if mac in self.kasa_devices: ctrl=self.kasa_devices[mac]['controller']; logging.info(f"Action implicite: OFF {self.get_alias('dev',mac)} P{self.get_alias('out',mac,idx)}"); tasks_to_run.append(ctrl.turn_outlet_off(idx)); self.live_kasa_states[mac][idx]=False
+                         if mac in self.kasa_devices: ctrl=self.kasa_devices[mac]['controller']; logging.info(f"Action implicite: OFF {self.get_alias('device',mac)} P{self.get_alias('outlet',mac,idx)}"); tasks_to_run.append(ctrl.turn_outlet_off(idx)); self.live_kasa_states[mac][idx]=False
                          else: logging.error(f"{mac} inconnu pour OFF implicite.")
             if tasks_to_run: logging.debug(f"Exec {len(tasks_to_run)} tâches Kasa..."); await asyncio.gather(*tasks_to_run, return_exceptions=True); logging.debug("Tâches Kasa finies.")
             await asyncio.sleep(2)
@@ -988,13 +929,13 @@ class GreenhouseApp: # Reprise de la classe principale
             if cond_type == 'Capteur':
                 s_id = condition_data.get('id'); thresh = condition_data.get('threshold')
                 if s_id is None or thresh is None or operator not in SENSOR_OPERATORS: logging.warning(f"Cond Capteur invalide (ID:{c_id})"); return False
-                if s_id not in current_sensor_values: logging.debug(f"Val manquante {s_id} (Cond ID:{c_id})"); return False
+                if s_id not in current_sensor_values: logging.debug(f"Val manquante {s_id} (Cond ID:{c_id})"); return False # Condition fausse si valeur manque
                 return self._compare(current_sensor_values[s_id], operator, float(thresh))
             elif cond_type == 'Heure':
                 t_str = condition_data.get('value')
                 if not t_str or operator not in TIME_OPERATORS: logging.warning(f"Cond Heure invalide (ID:{c_id})"); return False
                 target_t = datetime.strptime(t_str, '%H:%M').time()
-                logging.debug(f"Comp Temps (Cond ID:{c_id}): {current_time_obj:%H:%M:%S} {operator} {target_t:%H:%M}")
+                # logging.debug(f"Comp Temps (Cond ID:{c_id}): {current_time_obj:%H:%M:%S} {operator} {target_t:%H:%M}") # Log très verbeux
                 if operator=='<': return current_time_obj < target_t; elif operator=='>': return current_time_obj > target_t
                 elif operator=='<=': return current_time_obj <= target_t; elif operator=='>=': return current_time_obj >= target_t
                 curr_min=current_time_obj.hour*60+current_time_obj.minute; targ_min=target_t.hour*60+target_t.minute
@@ -1008,7 +949,7 @@ class GreenhouseApp: # Reprise de la classe principale
     def _compare(self, value1, operator, value2):
         try:
             v1, v2 = float(value1), float(value2)
-            logging.debug(f"Comp Num: {v1} {operator} {v2}")
+            # logging.debug(f"Comp Num: {v1} {operator} {v2}") # Log très verbeux
             if operator=='<': return v1 < v2; elif operator=='>': return v1 > v2
             elif operator=='=': return abs(v1-v2)<1e-9; elif operator=='!=': return abs(v1-v2)>=1e-9
             elif operator=='<=': return v1 <= v2; elif operator=='>=': return v1 >= v2
@@ -1023,7 +964,7 @@ class GreenhouseApp: # Reprise de la classe principale
 
     async def _async_turn_off_all(self):
         tasks={}; logging.info(f"Extinction Kasa: {len(self.kasa_devices)} dev...")
-        for m,d in self.kasa_devices.items(): c=d['controller']; a=self.get_alias('device',m); tasks[f"{a}({m})"]=c.turn_all_outlets_off() if d['info'].get('is_strip') or d['info'].get('is_plug') else asyncio.sleep(0) # Sleep(0) for non-plugs/strips
+        for m,d in self.kasa_devices.items(): c=d['controller']; a=self.get_alias('device',m); tasks[f"{a}({m})"]=c.turn_all_outlets_off() if d['info'].get('is_strip') or d['info'].get('is_plug') else asyncio.sleep(0)
         if tasks:
             logging.info(f"Exec {len(tasks)} tâches extinction..."); keys=list(tasks.keys()); coros=list(tasks.values()); results=await asyncio.gather(*coros, return_exceptions=True)
             s_c, f_c = 0, 0
@@ -1034,7 +975,7 @@ class GreenhouseApp: # Reprise de la classe principale
     def save_configuration(self):
         logging.info("Prépa sauvegarde...");
         for r_id in list(self.rule_widgets.keys()):
-             if r_id in self.rule_widgets: try: self.on_rule_change(r_id) # Màj partie ALORS
+             if r_id in self.rule_widgets: try: self.on_rule_change(r_id)
              except Exception as e: logging.error(f"Err on_rule_change avant save {r_id}: {e}")
         config_to_save = {"aliases": self.aliases, "rules": self.rules }
         logging.debug(f"Data pour save: {config_to_save}")
@@ -1059,3 +1000,21 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = GreenhouseApp(root)
     root.mainloop()
+```
+'''
+**Modifications Clés dans ce Code Final :**
+
+1.  **Classe `ConditionEditor` :** Entièrement ajoutée. Gère l'interface pop-up pour l'édition des conditions.
+2.  **`GreenhouseApp.__init__` :** Nettoie et initialise les règles chargées avec la nouvelle structure. Définit les styles ttk.
+3.  **`GreenhouseApp.add_rule_ui` :** Modifiée pour afficher le nom, les labels résumé et les boutons "Modifier..." au lieu des widgets de condition directs.
+4.  **`GreenhouseApp._populate_rule_ui_from_data` :** Modifiée pour peupler les nouveaux labels résumé et le nom.
+5.  **`GreenhouseApp.open_condition_editor` :** Lance maintenant l'instance de `ConditionEditor`.
+6.  **`GreenhouseApp.update_rule_conditions_from_editor` :** Nouvelle méthode appelée par `ConditionEditor` pour mettre à jour la règle et l'UI principale.
+7.  **`GreenhouseApp.on_rule_change` :** Simplifiée pour ne gérer que la partie "ALORS".
+8.  **`GreenhouseApp._check_condition` :** Nouvelle méthode pour évaluer une condition individuelle (Capteur ou Heure).
+9.  **`GreenhouseApp._async_monitoring_task` :** Logique d'évaluation entièrement réécrite pour utiliser les listes de conditions et la logique ET/OU.
+10. **Imports :** Ajout de `import re`, `import copy`, `from datetime import time`.
+11. **Constantes :** Ajout de `LOGIC_OPERATORS`, `CONDITION_TYPES`, `TIME_REGEX`.
+
+Ce code devrait maintenant fournir la fonctionnalité complète que vous avez demandée, avec l'édition des conditions complexes via un pop-up. N'oubliez pas de tester minutieusemen
+'''
