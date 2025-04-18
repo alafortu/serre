@@ -14,7 +14,7 @@ import copy # Pour la copie profonde des conditions
 # Assurez-vous que ces fichiers existent et sont corrects
 try:
     # logger_setup.py (pour la configuration du logging)
-    from logger_setup import setup_logging
+    from logger_setupbk import setup_logging
     # discover_device.py (pour la découverte des appareils Kasa)
     from discover_device import DeviceDiscoverer
     # device_control.py (pour le contrôle des appareils Kasa)
@@ -1572,6 +1572,8 @@ class GreenhouseApp:
         self.schedule_periodic_updates()
         logging.info("Monitoring démarré.")
 
+    # Modifiez la fonction stop_monitoring dans GreenhouseApp
+
     def stop_monitoring(self):
         """Arrête le thread de monitoring, met à jour l'UI et éteint les prises."""
         if not self.monitoring_active:
@@ -1584,12 +1586,15 @@ class GreenhouseApp:
         # Annuler les mises à jour périodiques de l'UI
         self.cancel_periodic_updates()
 
+        # NOUVEAU: Mettre à jour les labels Kasa dans l'UI immédiatement
+        # Utiliser after(0) pour s'assurer que cela s'exécute dans le thread Tkinter principal
+        self.root.after(0, self._set_kasa_status_labels_to_stopped)
+
         # Attendre que le thread de monitoring se termine (avec un timeout)
         if self.monitoring_thread and self.monitoring_thread.is_alive():
             logging.info("Attente de la fin du thread de monitoring (max 5 secondes)...")
             self.monitoring_thread.join(timeout=5.0)
             if self.monitoring_thread.is_alive():
-                # Si le thread ne s'est pas arrêté à temps
                 logging.warning("Le thread de monitoring n'a pas pu être arrêté dans le délai imparti.")
             else:
                 logging.info("Thread de monitoring terminé proprement.")
@@ -1610,6 +1615,22 @@ class GreenhouseApp:
 
         logging.info("Processus d'arrêt du monitoring terminé.")
 
+    def _set_kasa_status_labels_to_stopped(self):
+        """Met le texte des labels de statut des prises Kasa à 'OFF'."""
+        logging.debug("Mise à jour des labels Kasa UI à OFF après arrêt monitoring.")
+        for key, data in self.status_labels.items():
+             # Vérifier si c'est une entrée de prise et si le widget label existe
+            if data.get('type') == 'outlet' and 'label_value' in data:
+                label_widget = data['label_value']
+                try:
+                    # Vérifier si le widget existe toujours dans l'interface
+                    if label_widget.winfo_exists():
+                        # Définir le texte à OFF (ou "Arrêté", "Inconnu", etc.)
+                        label_widget.config(text="OFF")
+                except tk.TclError:
+                    # Ignorer si le widget a été détruit entre-temps
+                    logging.warning(f"Erreur TclError accès label Kasa {key} pendant màj arrêt.")
+                    pass
 
     def _set_rules_ui_state(self, state):
         """Active ou désactive les widgets d'édition des règles."""
@@ -2239,7 +2260,7 @@ if __name__ == "__main__":
     log_format = '%(asctime)s - %(levelname)s - [%(threadName)s] - %(filename)s:%(lineno)d - %(message)s'
     # Correct date format
     date_format = '%Y-%m-%d %H:%M:%S'
-    logging.basicConfig(level=logging.DEBUG, format=log_format, datefmt=date_format)
+    #logging.basicConfig(level=logging.DEBUG, format=log_format, datefmt=date_format)
 
     # If using logger_setup.py, ensure it's configured for DEBUG level as well.
     # The basicConfig call here might be overridden by logger_setup if it also configures the root logger.
