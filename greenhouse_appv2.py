@@ -779,7 +779,21 @@ class GreenhouseApp: # Reprise de la classe principale
         self.scrollable_status_frame.update_idletasks(); status_canvas=self.scrollable_status_frame.master; status_canvas.configure(scrollregion=status_canvas.bbox("all"))
 
     def schedule_periodic_updates(self): self.update_live_status(); self.ui_update_job = self.root.after(5000, self.schedule_periodic_updates)
-    def cancel_periodic_updates(self): if self.ui_update_job: self.root.after_cancel(self.ui_update_job); self.ui_update_job = None
+    
+    def cancel_periodic_updates(self):
+        """Annule la mise à jour périodique de l'UI."""
+        if self.ui_update_job:
+            try:
+                # Essayer d'annuler la tâche planifiée
+                self.root.after_cancel(self.ui_update_job)
+                logging.debug(f"Tâche UI périodique {self.ui_update_job} annulée.")
+            except tk.TclError as e:
+                # Peut arriver si l'ID n'est plus valide (rare)
+                logging.warning(f"Erreur lors de l'annulation de la tâche UI {self.ui_update_job}: {e}")
+            finally:
+                 # Assurer que la variable est réinitialisée même en cas d'erreur d'annulation
+                self.ui_update_job = None
+    
     def update_live_status(self):
         if not self.monitoring_active: return
         logging.debug("MàJ live status UI...")
