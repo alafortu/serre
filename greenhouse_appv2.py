@@ -135,9 +135,9 @@ class ConditionEditor(simpledialog.Dialog):
              # S'il n'y a pas de condition initiale, ajouter une ligne vide
              self._add_condition_line()
         else:
-            # Sinon, ajouter une ligne pour chaque condition existante
-            for condition_data in self.initial_conditions:
-                self._add_condition_line(condition_data)
+             # Sinon, ajouter une ligne pour chaque condition existante
+             for condition_data in self.initial_conditions:
+                 self._add_condition_line(condition_data)
 
         # --- Bouton Ajouter Condition ---
         add_button_frame = ttk.Frame(dialog_frame)
@@ -220,7 +220,7 @@ class ConditionEditor(simpledialog.Dialog):
 
         # 5. Bouton Supprimer (-)
         delete_button = ttk.Button(line_frame, text="➖", width=2, style="Red.TButton",
-                                   command=lambda frame=line_frame: self._delete_condition_line(frame))
+                                  command=lambda frame=line_frame: self._delete_condition_line(frame))
         delete_button.pack(side=tk.RIGHT, padx=5)
 
         # Stocker les informations de la ligne
@@ -735,7 +735,7 @@ class GreenhouseApp:
         widgets['name_label'].pack(side=tk.LEFT, padx=(0, 5), pady=(0, 3))
         # Bouton pour éditer le nom
         widgets['edit_name_button'] = ttk.Button(name_frame, text="✎", width=2,
-                                                 command=lambda r_id=rule_id: self.edit_rule_name_dialog(r_id))
+                                                command=lambda r_id=rule_id: self.edit_rule_name_dialog(r_id))
         widgets['edit_name_button'].pack(side=tk.LEFT, padx=(0, 15))
         # Bouton pour supprimer la règle
         delete_rule_button = ttk.Button(name_frame, text="❌", width=3, style="Red.TButton",
@@ -1320,7 +1320,7 @@ class GreenhouseApp:
             value_label.pack(side=tk.LEFT, padx=5)
             # Bouton pour éditer l'alias
             edit_button = ttk.Button(sensor_frame, text="✎", width=2,
-                                     command=lambda s_id=sensor_id, s_name=sensor_alias: self.edit_alias_dialog('sensor', s_id, s_name))
+                                      command=lambda s_id=sensor_id, s_name=sensor_alias: self.edit_alias_dialog('sensor', s_id, s_name))
             edit_button.pack(side=tk.LEFT, padx=2)
 
             # Stocker les références aux labels pour les mises à jour futures
@@ -1699,114 +1699,90 @@ class GreenhouseApp:
         return {}
 
     # --- Logique d'Évaluation des Règles (Coeur du Monitoring) ---
+    # ****************************************************************
+    # *********************** VERSION CORRIGÉE ***********************
+    # ****************************************************************
     async def _async_monitoring_task(self):
         """Tâche asynchrone principale qui évalue les règles et contrôle les prises."""
-        active_until_rules = {}
+        # Store more info for active rules: original action needed to maintain state
+        active_until_rules = {} # {rule_id: {'revert_action': 'ON'/'OFF', 'original_action': 'ON'/'OFF'}}
         last_kasa_update = datetime.min
-        kasa_update_interval = timedelta(seconds=10)
+        kasa_update_interval = timedelta(seconds=10) # Check Kasa state every 10 seconds
 
         logging.info("Début de la boucle de monitoring principale.")
 
         while self.monitoring_active:
             now_dt = datetime.now()
             now_time = now_dt.time()
-            logging.debug(f"--- Cycle Mon {now_dt:%Y-%m-%d %H:%M:%S} ---") # DEBUG Log
+            logging.debug(f"--- Cycle Mon {now_dt:%Y-%m-%d %H:%M:%S} ---")
 
             # --- 1. Lecture des Capteurs ---
             current_sensor_values = {}
             try:
+                # Use run_in_executor for potentially blocking I/O
                 temp_values = await self.asyncio_loop.run_in_executor(None, self.temp_manager.read_all_temperatures)
                 light_values = await self.asyncio_loop.run_in_executor(None, self.light_manager.read_all_sensors)
+                # Combine and filter out None values
                 current_sensor_values = {k: v for k, v in {**temp_values, **light_values}.items() if v is not None}
-                # *** DEBUG PRINT: Show sensor values read this cycle ***
-                logging.debug(f"[MONITORING] Valeurs capteurs lues: {current_sensor_values}") # DEBUG Log
+                logging.debug(f"[MONITORING] Valeurs capteurs lues: {current_sensor_values}")
             except Exception as e:
-                logging.error(f"[MONITORING] Erreur lecture capteurs: {e}") # ERROR Log
+                logging.error(f"[MONITORING] Erreur lecture capteurs: {e}")
 
             # --- 2. Mise à jour des états Kasa ---
             if now_dt - last_kasa_update >= kasa_update_interval:
                 try:
-                    # *** DEBUG PRINT: Show Kasa states *before* update ***
-                    logging.debug(f"[MONITORING] États Kasa avant màj: {self.live_kasa_states}") # DEBUG Log
+                    logging.debug(f"[MONITORING] États Kasa avant màj: {self.live_kasa_states}")
                     await self._update_live_kasa_states_task()
                     last_kasa_update = now_dt
-                    # *** DEBUG PRINT: Show Kasa states *after* update ***
-                    logging.debug(f"[MONITORING] États Kasa après màj: {self.live_kasa_states}") # DEBUG Log
+                    logging.debug(f"[MONITORING] États Kasa après màj: {self.live_kasa_states}")
                 except Exception as e:
-                    logging.error(f"[MONITORING] Échec màj Kasa: {e}") # ERROR Log
-            # else:
-                 # logging.debug("[MONITORING] Skipping Kasa state update (interval not reached).") # DEBUG Log
-
+                    logging.error(f"[MONITORING] Échec màj Kasa: {e}")
 
             # --- 3. Évaluation des Règles ---
-            tasks_to_run = []
-            rules_to_evaluate = list(self.rules)
-            desired_outlet_states = {}
-            active_until_copy = dict(active_until_rules)
+            desired_outlet_states = {} # { (mac, index): 'ON'/'OFF' } - Reset each cycle
+            rules_to_evaluate = list(self.rules) # Make a copy
+            active_until_copy = dict(active_until_rules) # Copy for safe iteration
 
             # --- 3a. Évaluation des conditions JUSQU'À actives ---
-            logging.debug(f"[MONITORING] Éval UNTIL - Règles actives: {list(active_until_copy.keys())}") # DEBUG Log
+            logging.debug(f"[MONITORING] Éval UNTIL - Règles actives: {list(active_until_copy.keys())}")
             for rule_id, until_info in active_until_copy.items():
                 rule = next((r for r in rules_to_evaluate if r.get('id') == rule_id), None)
                 if not rule:
-                    logging.warning(f"[MONITORING] R{rule_id} (UNTIL): Règle non trouvée. Annulation.") # WARNING Log
-                    del active_until_rules[rule_id]
+                    logging.warning(f"[MONITORING] R{rule_id} (UNTIL): Règle non trouvée. Annulation.")
+                    if rule_id in active_until_rules: del active_until_rules[rule_id]
                     continue
 
                 mac = rule.get('target_device_mac')
                 idx = rule.get('target_outlet_index')
                 if mac is None or idx is None:
-                     logging.warning(f"[MONITORING] R{rule_id} (UNTIL): Cible invalide. Annulation.") # WARNING Log
-                     del active_until_rules[rule_id]
-                     continue
+                    logging.warning(f"[MONITORING] R{rule_id} (UNTIL): Cible invalide. Annulation.")
+                    if rule_id in active_until_rules: del active_until_rules[rule_id]
+                    continue
 
                 outlet_key = (mac, idx)
                 until_logic = rule.get('until_logic', 'OU')
                 until_conditions = rule.get('until_conditions', [])
 
-                if not until_conditions:
-                    logging.debug(f"[MONITORING] R{rule_id} (UNTIL): Aucune condition. Désactivation.") # DEBUG Log
-                    del active_until_rules[rule_id]
+                if not until_conditions: # Should not happen if rule entered active_until
+                    logging.debug(f"[MONITORING] R{rule_id} (UNTIL): Aucune condition. Désactivation.")
+                    if rule_id in active_until_rules: del active_until_rules[rule_id]
                     continue
 
-                until_condition_met = False
-                condition_that_met_until = None # *** DEBUG: Store which condition met UNTIL ***
-                if until_logic == 'ET':
-                    all_true = True
-                    if not until_conditions: all_true = False
-                    else:
-                        for cond in until_conditions:
-                            cond_result = self._check_condition(cond, current_sensor_values, now_time)
-                            if not cond_result:
-                                all_true = False
-                                logging.debug(f"[MONITORING] R{rule_id} UNTIL(ET) échoue sur CondID:{cond.get('condition_id','N/A')}") # DEBUG Log
-                                break
-                    until_condition_met = all_true
-                    if until_condition_met: condition_that_met_until = "Toutes (ET)" # *** DEBUG ***
-                elif until_logic == 'OU':
-                    any_true = False
-                    for cond in until_conditions:
-                         cond_result = self._check_condition(cond, current_sensor_values, now_time)
-                         if cond_result:
-                            any_true = True
-                            condition_that_met_until = cond.get('condition_id','N/A') # *** DEBUG ***
-                            logging.debug(f"[MONITORING] R{rule_id} UNTIL(OU) réussit sur CondID:{condition_that_met_until}") # DEBUG Log
-                            break
-                    until_condition_met = any_true
-                else:
-                    logging.error(f"[MONITORING] R{rule_id}: Logique UNTIL inconnue '{until_logic}'.") # ERROR Log
-                    until_condition_met = False
+                # Check the UNTIL condition using the helper function
+                until_condition_met = self._evaluate_logic_group(until_conditions, until_logic, current_sensor_values, now_time, rule_id, "UNTIL")
 
                 if until_condition_met:
                     revert_action = until_info['revert_action']
-                    # *** DEBUG PRINT: Show UNTIL met details ***
-                    logging.info(f"[MONITORING] R{rule_id}: Condition JUSQU'À ({until_logic}) REMPLIE (par CondID: {condition_that_met_until}). Action retour: {revert_action}. Capteurs: {current_sensor_values}") # INFO Log
+                    condition_that_met_until = "Condition(s) UNTIL" # Simplified log
+                    logging.info(f"[MONITORING] R{rule_id}: Condition JUSQU'À ({until_logic}) REMPLIE (par {condition_that_met_until}). Action retour: {revert_action}.")
+                    # Set desired state to revert action, potentially overriding SI from this cycle
                     desired_outlet_states[outlet_key] = revert_action
-                    if rule_id in active_until_rules: # Check before deleting
+                    if rule_id in active_until_rules: # Remove from active list
                         del active_until_rules[rule_id]
+                # else: UNTIL condition not met, rule remains active, state will be handled in 3c
 
             # --- 3b. Évaluation des conditions SI ---
-            logging.debug(f"[MONITORING] Éval SI - Règles à évaluer: {len(rules_to_evaluate)}") # DEBUG Log
+            logging.debug(f"[MONITORING] Éval SI - Règles à évaluer: {len(rules_to_evaluate)}")
             for rule in rules_to_evaluate:
                 rule_id = rule.get('id')
                 mac = rule.get('target_device_mac')
@@ -1814,142 +1790,170 @@ class GreenhouseApp:
                 action = rule.get('action')
 
                 if not rule_id or mac is None or idx is None or not action:
-                    continue
+                    continue # Skip invalid rules
 
                 outlet_key = (mac, idx)
 
-                # Check if state already set by UNTIL this cycle
-                if outlet_key in desired_outlet_states and rule_id not in active_until_rules: # Ensure it wasn't this rule's UNTIL
-                     logging.debug(f"[MONITORING] R{rule_id}: Éval SI skip (état déjà fixé par UNTIL pour {outlet_key}).") # DEBUG Log
-                     continue
-
-                # Check if this rule is waiting for its OWN UNTIL condition
+                # Skip SI evaluation if the rule is currently waiting for UNTIL
                 if rule_id in active_until_rules:
-                     logging.debug(f"[MONITORING] R{rule_id}: Éval SI skip (règle en attente UNTIL).") # DEBUG Log
+                    logging.debug(f"[MONITORING] R{rule_id}: Éval SI skip (règle en attente UNTIL).")
+                    continue
+
+                # Skip SI evaluation if the state was already set by an UNTIL condition *this cycle*
+                # This prevents an SI condition from immediately overriding its own UNTIL's revert action
+                if outlet_key in desired_outlet_states:
+                     logging.debug(f"[MONITORING] R{rule_id}: Éval SI skip (état déjà fixé par UNTIL pour {outlet_key} ce cycle).")
                      continue
 
                 trigger_logic = rule.get('trigger_logic', 'ET')
                 trigger_conditions = rule.get('conditions', [])
 
                 if not trigger_conditions:
-                    continue
+                    continue # Skip rules without trigger conditions
 
-                trigger_condition_met = False
-                condition_that_met_trigger = None # *** DEBUG: Store which condition met SI ***
-                if trigger_logic == 'ET':
-                    all_true=True
-                    if not trigger_conditions: all_true=False
-                    else:
-                        for cond in trigger_conditions:
-                            cond_result = self._check_condition(cond, current_sensor_values, now_time)
-                            if not cond_result:
-                                all_true=False
-                                logging.debug(f"[MONITORING] R{rule_id} SI(ET) échoue sur CondID:{cond.get('condition_id','N/A')}") # DEBUG Log
-                                break
-                    trigger_condition_met = all_true
-                    if trigger_condition_met: condition_that_met_trigger = "Toutes (ET)" # *** DEBUG ***
-                elif trigger_logic == 'OU':
-                    any_true=False
-                    for cond in trigger_conditions:
-                        cond_result = self._check_condition(cond, current_sensor_values, now_time)
-                        if cond_result:
-                            any_true=True
-                            condition_that_met_trigger = cond.get('condition_id','N/A') # *** DEBUG ***
-                            logging.debug(f"[MONITORING] R{rule_id} SI(OU) réussit sur CondID:{condition_that_met_trigger}") # DEBUG Log
-                            break
-                    trigger_condition_met = any_true
-                else:
-                    logging.error(f"[MONITORING] R{rule_id}: Logique SI inconnue '{trigger_logic}'.") # ERROR Log
-                    trigger_condition_met = False
+                # Check the SI condition using the helper function
+                trigger_condition_met = self._evaluate_logic_group(trigger_conditions, trigger_logic, current_sensor_values, now_time, rule_id, "SI")
 
                 if trigger_condition_met:
-                    # *** DEBUG PRINT: Show SI met details ***
-                    logging.info(f"[MONITORING] R{rule_id}: Condition SI ({trigger_logic}) REMPLIE (par CondID: {condition_that_met_trigger}). Action désirée: {action}. Capteurs: {current_sensor_values}") # INFO Log
-                    if outlet_key not in desired_outlet_states:
-                         desired_outlet_states[outlet_key] = action
-                         if rule.get('until_conditions') and rule_id not in active_until_rules:
-                             revert_action = 'OFF' if action == 'ON' else 'ON'
-                             # *** DEBUG PRINT: Show UNTIL activation ***
-                             logging.info(f"[MONITORING] R{rule_id}: Activation JUSQU'À ({rule.get('until_logic','OU')}). Action retour: {revert_action}.") # INFO Log
-                             active_until_rules[rule_id] = {'revert_action': revert_action}
-                    else:
-                         # *** DEBUG PRINT: Potential conflict ***
-                         logging.warning(f"[MONITORING] R{rule_id}: Conflit potentiel? État pour {outlet_key} déjà défini à {desired_outlet_states[outlet_key]} (par UNTIL ou autre SI?). Action {action} ignorée.") # WARNING Log
+                    condition_that_met_trigger = "Condition(s) SI" # Simplified log
+                    logging.info(f"[MONITORING] R{rule_id}: Condition SI ({trigger_logic}) REMPLIE (par {condition_that_met_trigger}). Action désirée: {action}.")
+                    # Set desired state ONLY if not already set by UNTIL this cycle (already checked above)
+                    desired_outlet_states[outlet_key] = action
+
+                    # Check if this rule has an UNTIL condition to activate
+                    if rule.get('until_conditions'):
+                        revert_action = 'OFF' if action == 'ON' else 'ON'
+                        logging.info(f"[MONITORING] R{rule_id}: Activation JUSQU'À ({rule.get('until_logic','OU')}). Action retour: {revert_action}.")
+                        # Store both original action and revert action
+                        active_until_rules[rule_id] = {'revert_action': revert_action, 'original_action': action}
+
+            # --- 3c. Maintenir l'état des règles actives (UNTIL non remplie) ---
+            # This step ensures that rules waiting for UNTIL keep their outlets in the desired state
+            logging.debug(f"[MONITORING] Maintien états actifs - Règles: {list(active_until_rules.keys())}")
+            for rule_id, until_info in active_until_rules.items():
+                 rule = next((r for r in rules_to_evaluate if r.get('id') == rule_id), None)
+                 if not rule: continue # Should have been caught earlier
+
+                 mac = rule.get('target_device_mac')
+                 idx = rule.get('target_outlet_index')
+                 if mac is None or idx is None: continue
+
+                 outlet_key = (mac, idx)
+                 original_action = until_info['original_action']
+
+                 # If the state wasn't set by its own UNTIL condition being met this cycle,
+                 # maintain the original action state. This prevents the implicit OFF.
+                 if outlet_key not in desired_outlet_states:
+                     logging.debug(f"[MONITORING] R{rule_id}: Maintien état actif {original_action} pour {outlet_key}")
+                     desired_outlet_states[outlet_key] = original_action
+                 # else: State was already set (likely by its UNTIL being met), do nothing here.
 
 
             # --- 4. Application des changements Kasa ---
-            # *** DEBUG PRINT: Show final desired states before applying ***
-            logging.debug(f"[MONITORING] États Kasa désirés finaux pour ce cycle: {desired_outlet_states}") # DEBUG Log
+            logging.debug(f"[MONITORING] États Kasa désirés finaux pour ce cycle: {desired_outlet_states}")
+            tasks_to_run = []
+
+            # Determine all outlets managed by ANY rule
             all_managed_outlets = set(
                 (r.get('target_device_mac'), r.get('target_outlet_index'))
                 for r in rules_to_evaluate
                 if r.get('target_device_mac') is not None and r.get('target_outlet_index') is not None
             )
+            logging.debug(f"[MONITORING] Prises gérées par les règles: {all_managed_outlets}")
 
-            # --- 4a. Appliquer les états désirés explicites ---
-            for outlet_key, desired_state in desired_outlet_states.items():
-                mac, idx = outlet_key
-                current_live_state = self.live_kasa_states.get(mac, {}).get(idx)
+            # Iterate through all *managed* outlets to determine necessary actions
+            for mac, idx in all_managed_outlets:
+                outlet_key = (mac, idx)
+                # Get the desired state for this outlet based on rule evaluations this cycle
+                desired_state = desired_outlet_states.get(outlet_key) # Will be 'ON', 'OFF', or None if no rule dictated a state this cycle
+                # Get the last known actual state
+                current_live_state = self.live_kasa_states.get(mac, {}).get(idx) # Will be True, False, or None
 
                 action_needed = False
                 kasa_function_name = None
+                target_state_bool = None # For optimistic update
 
                 if desired_state == 'ON' and current_live_state is not True:
+                    # Rule wants ON, but it's OFF or Unknown
                     action_needed = True
                     kasa_function_name = 'turn_outlet_on'
+                    target_state_bool = True
                 elif desired_state == 'OFF' and current_live_state is not False:
+                    # Rule wants OFF, but it's ON or Unknown
                     action_needed = True
                     kasa_function_name = 'turn_outlet_off'
+                    target_state_bool = False
+                elif desired_state is None and current_live_state is True:
+                     # If no rule explicitly wants it ON or OFF this cycle, and it's currently ON,
+                     # turn it OFF. This is the corrected implicit OFF logic.
+                    action_needed = True
+                    kasa_function_name = 'turn_outlet_off'
+                    target_state_bool = False
+                    logging.info(f"[ACTION KASA] Implicite: {self.get_alias('device', mac)} / {self.get_alias('outlet', mac, idx)} -> OFF (non désirée explicitement ce cycle)")
 
                 if action_needed:
                     if mac in self.kasa_devices:
                         controller = self.kasa_devices[mac]['controller']
-                        # *** DEBUG PRINT: Show explicit action being taken ***
-                        logging.info(f"[ACTION KASA] Explicite: {self.get_alias('device', mac)} / {self.get_alias('outlet', mac, idx)} -> {desired_state} (État live avant: {current_live_state})") # INFO Log
+                        # Log the action being taken
+                        log_state = desired_state if desired_state else 'OFF (Implicit)'
+                        logging.info(f"[ACTION KASA] {self.get_alias('device', mac)} / {self.get_alias('outlet', mac, idx)} -> {log_state} (État live avant: {current_live_state})")
                         tasks_to_run.append(getattr(controller, kasa_function_name)(idx))
-                        self.live_kasa_states.setdefault(mac, {})[idx] = (desired_state == 'ON')
+                        # Optimistic update of live state immediately
+                        self.live_kasa_states.setdefault(mac, {})[idx] = target_state_bool
                     else:
-                        logging.error(f"[ACTION KASA] Erreur: Appareil Kasa {mac} non trouvé pour action {desired_state}.") # ERROR Log
-                # else:
-                     # logging.debug(f"[ACTION KASA] Aucune action explicite requise pour {outlet_key}, état déjà {desired_state}.") # DEBUG Log
+                        logging.error(f"[ACTION KASA] Erreur: Appareil Kasa {mac} non trouvé pour action.")
 
-            # --- 4b. Gérer les prises non explicitement désirées (implicitement OFF) ---
-            live_outlets_to_check = []
-            for mac, outlets in self.live_kasa_states.items():
-                 for idx, is_on in outlets.items():
-                      live_outlets_to_check.append(((mac, idx), is_on))
-
-            for outlet_key, is_on in live_outlets_to_check:
-                if outlet_key in all_managed_outlets and outlet_key not in desired_outlet_states:
-                    if is_on:
-                        mac, idx = outlet_key
-                        if mac in self.kasa_devices:
-                            controller = self.kasa_devices[mac]['controller']
-                            # *** DEBUG PRINT: Show implicit action being taken ***
-                            logging.info(f"[ACTION KASA] Implicite: {self.get_alias('device', mac)} / {self.get_alias('outlet', mac, idx)} -> OFF (non désirée explicitement ce cycle)") # INFO Log
-                            tasks_to_run.append(controller.turn_outlet_off(idx))
-                            self.live_kasa_states.setdefault(mac, {})[idx] = False
-                        else:
-                            logging.error(f"[ACTION KASA] Erreur: Appareil Kasa {mac} non trouvé pour action OFF implicite.") # ERROR Log
 
             # --- 5. Exécuter les tâches Kasa ---
             if tasks_to_run:
-                logging.debug(f"[MONITORING] Exécution de {len(tasks_to_run)} tâches Kasa...") # DEBUG Log
+                logging.debug(f"[MONITORING] Exécution de {len(tasks_to_run)} tâches Kasa...")
                 try:
                     results = await asyncio.gather(*tasks_to_run, return_exceptions=True)
                     for i, res in enumerate(results):
                         if isinstance(res, Exception):
-                             logging.error(f"[MONITORING] Erreur tâche Kasa (index {i}): {res}") # ERROR Log
+                            # Attempt to find which task failed (more complex, maybe add later)
+                            logging.error(f"[MONITORING] Erreur tâche Kasa (index {i}): {res}")
                 except Exception as e_gather:
-                     logging.error(f"[MONITORING] Erreur gather Kasa: {e_gather}") # ERROR Log
-                logging.debug("[MONITORING] Tâches Kasa du cycle terminées.") # DEBUG Log
-            # else:
-                 # logging.debug("[MONITORING] Aucune action Kasa à exécuter ce cycle.") # DEBUG Log
+                    logging.error(f"[MONITORING] Erreur gather Kasa: {e_gather}")
+                logging.debug("[MONITORING] Tâches Kasa du cycle terminées.")
 
             # --- 6. Attente avant le prochain cycle ---
-            await asyncio.sleep(2)
+            await asyncio.sleep(2) # Wait 2 seconds before the next cycle
 
-        logging.info("Sortie de la boucle de monitoring principale.") # INFO Log
+        logging.info("Sortie de la boucle de monitoring principale.")
+    # ****************************************************************
+    # ********************* FIN VERSION CORRIGÉE *********************
+    # ****************************************************************
+
+    # --- Helper function to evaluate a list of conditions based on logic (ET/OU) ---
+    def _evaluate_logic_group(self, conditions, logic, current_sensor_values, current_time_obj, rule_id_log, group_type_log):
+        """Evaluates a list of conditions based on ET/OU logic."""
+        if not conditions:
+            # If logic is ET, no conditions means False. If OU, no conditions means False.
+            # An empty condition group never evaluates to True.
+            return False
+
+        if logic == 'ET':
+            all_true = True
+            for cond in conditions:
+                cond_result = self._check_condition(cond, current_sensor_values, current_time_obj)
+                if not cond_result:
+                    all_true = False
+                    logging.debug(f"[MONITORING] R{rule_id_log} {group_type_log}(ET) échoue sur CondID:{cond.get('condition_id','N/A')}")
+                    break # No need to check further for ET
+            return all_true
+        elif logic == 'OU':
+            any_true = False
+            for cond in conditions:
+                cond_result = self._check_condition(cond, current_sensor_values, current_time_obj)
+                if cond_result:
+                    any_true = True
+                    logging.debug(f"[MONITORING] R{rule_id_log} {group_type_log}(OU) réussit sur CondID:{cond.get('condition_id','N/A')}")
+                    break # No need to check further for OU
+            return any_true
+        else:
+            logging.error(f"[MONITORING] R{rule_id_log}: Logique {group_type_log} inconnue '{logic}'.")
+            return False
 
 
     # --- Fonction de Vérification de Condition ---
@@ -2003,11 +2007,12 @@ class GreenhouseApp:
                 elif operator == '<=': result = current_time_obj <= target_time
                 elif operator == '>=': result = current_time_obj >= target_time
                 else:
+                    # Compare only hour and minute for '=' and '!='
                     current_minutes = current_time_obj.hour * 60 + current_time_obj.minute
                     target_minutes = target_time.hour * 60 + target_time.minute
                     if operator == '=': result = current_minutes == target_minutes
                     elif operator == '!=': result = current_minutes != target_minutes
-                    else: result = False
+                    else: result = False # Should not happen due to validation
 
                 logging.debug(f"[COND CHECK] -> Résultat (ID:{cond_id_log}): {result}") # DEBUG Log
                 return result
@@ -2031,7 +2036,7 @@ class GreenhouseApp:
 
             if operator == '<': return v1 < v2
             elif operator == '>': return v1 > v2
-            elif operator == '=': return abs(v1 - v2) < 1e-9
+            elif operator == '=': return abs(v1 - v2) < 1e-9 # Use tolerance for float equality
             elif operator == '!=': return abs(v1 - v2) >= 1e-9
             elif operator == '<=': return v1 <= v2
             elif operator == '>=': return v1 >= v2
@@ -2051,11 +2056,14 @@ class GreenhouseApp:
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
+                     # If a loop is running (likely the monitoring one if stopped abruptly), run in threadsafe manner
                      future = asyncio.run_coroutine_threadsafe(self._async_turn_off_all(), loop)
-                     future.result(timeout=15)
+                     future.result(timeout=15) # Wait for completion with timeout
                 else:
+                     # If no loop is running, run until complete
                      loop.run_until_complete(self._async_turn_off_all())
             except RuntimeError:
+                # If get_event_loop fails (no loop set for this thread), use asyncio.run
                 logging.info("Aucune boucle asyncio existante, utilisation de asyncio.run pour l'extinction.") # INFO Log
                 asyncio.run(self._async_turn_off_all())
         except asyncio.TimeoutError:
@@ -2077,7 +2085,8 @@ class GreenhouseApp:
                 logging.debug(f"Ajout tâche extinction pour: {task_key}") # DEBUG Log
                 tasks[task_key] = controller.turn_all_outlets_off()
             else:
-                tasks[task_key] = asyncio.sleep(0)
+                 # Add a dummy task for non-controllable devices to keep gather happy
+                 tasks[task_key] = asyncio.sleep(0)
 
         if tasks:
             logging.info(f"Exécution de {len(tasks)} tâches d'extinction Kasa en parallèle...") # INFO Log
@@ -2095,7 +2104,7 @@ class GreenhouseApp:
                 else:
                     # Check if the task was a real turn_off or just sleep(0)
                     original_coro = task_coroutines[i]
-                    # Check if it's a coroutine and its name is 'sleep'
+                    # Check if it's a coroutine and its name is 'sleep' (crude check)
                     is_sleep_task = asyncio.iscoroutine(original_coro) and getattr(original_coro, '__name__', '') == 'sleep'
                     if not is_sleep_task:
                          # Only log success for actual turn_off tasks if needed
@@ -2112,16 +2121,19 @@ class GreenhouseApp:
         """Sauvegarde la configuration actuelle (alias et règles) dans le fichier YAML."""
         logging.info("Préparation de la sauvegarde de la configuration...") # INFO Log
 
+        # Ensure current UI selections are reflected in self.rules before saving
+        # Iterate through a copy of keys in case a rule gets deleted during the process (unlikely)
         for rule_id in list(self.rule_widgets.keys()):
-             if rule_id in self.rule_widgets:
+             if rule_id in self.rule_widgets: # Check if rule still exists in UI
                  try:
+                     # This updates the rule data based on combobox selections
                      self.on_rule_change(rule_id)
                  except Exception as e:
                      logging.error(f"Erreur on_rule_change avant save pour règle {rule_id}: {e}") # ERROR Log
 
         config_to_save = {
             "aliases": self.aliases,
-            "rules": self.rules
+            "rules": self.rules # self.rules should now be up-to-date
         }
         logging.debug(f"Données préparées pour la sauvegarde: {config_to_save}") # DEBUG Log
 
@@ -2135,26 +2147,29 @@ class GreenhouseApp:
         """Gère l'événement de fermeture de la fenêtre principale."""
         if self.monitoring_active:
             if messagebox.askyesno("Quitter l'Application",
-                                   "Le monitoring est actif.\n\nVoulez-vous arrêter et quitter ?",
-                                   parent=self.root):
+                                  "Le monitoring est actif.\n\nVoulez-vous arrêter et quitter ?",
+                                  parent=self.root):
                 logging.info("Arrêt monitoring & fermeture demandés...") # INFO Log
                 self.stop_monitoring()
+                # Allow some time for stop_monitoring tasks (like Kasa shutdown) to initiate
                 logging.info("Fermeture app dans 1 sec...") # INFO Log
                 self.root.after(1000, self.root.destroy)
             else:
                 logging.debug("Fermeture annulée (monitoring actif).") # DEBUG Log
-                return
+                return # Don't close
         else:
             if messagebox.askyesno("Quitter l'Application",
-                                   "Êtes-vous sûr de vouloir quitter ?",
-                                   parent=self.root):
+                                  "Êtes-vous sûr de vouloir quitter ?",
+                                  parent=self.root):
                 logging.info("Fermeture demandée (monitoring inactif)...") # INFO Log
+                # Attempt safe shutdown even if monitoring wasn't active
                 logging.info("Lancement extinction Kasa...") # INFO Log
                 threading.Thread(target=self._turn_off_all_kasa_safely, daemon=True).start()
                 logging.info("Fermeture app dans 1 sec...") # INFO Log
                 self.root.after(1000, self.root.destroy)
             else:
                 logging.debug("Fermeture annulée (monitoring inactif).") # DEBUG Log
+                # No return needed here, default close behavior is prevented by overriding protocol
 
 
 # --- Point d'Entrée Principal ---
@@ -2163,7 +2178,9 @@ if __name__ == "__main__":
     # Make sure logger_setup.py *also* allows DEBUG level if you are using it
     # Add filename and line number to log format for easier debugging
     log_format = '%(asctime)s - %(levelname)s - [%(threadName)s] - %(filename)s:%(lineno)d - %(message)s'
-    logging.basicConfig(level=logging.DEBUG, format=log_format)
+    # Correct date format
+    date_format = '%Y-%m-%d %H:%M:%S'
+    logging.basicConfig(level=logging.DEBUG, format=log_format, datefmt=date_format)
 
     # If using logger_setup.py, ensure it's configured for DEBUG level as well.
     # The basicConfig call here might be overridden by logger_setup if it also configures the root logger.
