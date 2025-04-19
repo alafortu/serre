@@ -1,8 +1,20 @@
+# Pour le contrôle des appareils Kasa
 python-kasa
+
+# Pour les capteurs de température DS18B20 (1-Wire)
 w1thermsensor
-smbus2 
+
+# Pour la communication I2C (souvent requis par Blinka/Hardware libs sur RPi)
+smbus2
+
+# Couche de compatibilité Adafruit pour Raspberry Pi (pour I2C, GPIO etc.)
 adafruit-blinka
+
+# Pour le capteur de lumière BH1750 (via Blinka)
 adafruit-circuitpython-bh1750
-tk 
-PyYAML 
+
+# Pour la lecture/écriture des fichiers de configuration YAML
+PyYAML
+
+# Pour les boucles asynchrones
 asyncio 
