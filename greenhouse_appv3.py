@@ -50,7 +50,7 @@ DEFAULT_CONFIG_FILE = 'config.yaml' # Nom du fichier de configuration
 TIME_REGEX = re.compile(r'^([01]\d|2[0-3]):([0-5]\d)$') # Expression régulière pour valider le format HH:MM
 
 #--------------------------------------------------------------------------
-# CLASSE POUR L'ÉDITEUR DE CONDITIONS (POP-UP) - CORRECTION ERREUR FOCUS
+# CLASSE POUR L'ÉDITEUR DE CONDITIONS (POP-UP) - CORRECTION AttributeError
 #--------------------------------------------------------------------------
 class ConditionEditor(simpledialog.Dialog):
     """Fenêtre modale pour éditer une liste de conditions (SI ou JUSQU'À)."""
@@ -76,114 +76,84 @@ class ConditionEditor(simpledialog.Dialog):
 
     def body(self, master):
         """Crée le contenu du corps de la boîte de dialogue en utilisant grid de manière stricte."""
-        # Frame principal qui utilisera grid pour sa mise en page globale
+        # ... (body identique à la version "Grid V3 Precision") ...
         dialog_frame = ttk.Frame(master)
-        dialog_frame.pack(fill=tk.BOTH, expand=True) # pack ce frame pour remplir le dialogue
+        dialog_frame.pack(fill=tk.BOTH, expand=True)
+        dialog_frame.columnconfigure(0, weight=1)
+        dialog_frame.columnconfigure(1, weight=0)
+        dialog_frame.rowconfigure(0, weight=0)
+        dialog_frame.rowconfigure(1, weight=0)
+        dialog_frame.rowconfigure(2, weight=1)
+        dialog_frame.rowconfigure(3, weight=0)
+        dialog_frame.rowconfigure(4, weight=0)
 
-        # Configurer les colonnes du dialogue principal
-        dialog_frame.columnconfigure(0, weight=1)  # Colonne 0 pour le contenu principal (extensible)
-        dialog_frame.columnconfigure(1, weight=0)  # Colonne 1 fixe pour la scrollbar
-
-        # Configurer les lignes du dialogue principal
-        dialog_frame.rowconfigure(0, weight=0) # Ligne pour Logique globale
-        dialog_frame.rowconfigure(1, weight=0) # Ligne pour En-têtes
-        dialog_frame.rowconfigure(2, weight=1) # Ligne pour Canvas (extensible verticalement)
-        dialog_frame.rowconfigure(3, weight=0) # Ligne pour Bouton Ajouter
-        dialog_frame.rowconfigure(4, weight=0) # Ligne pour Boutons OK/Annuler
-
-
-        # --- Section Logique Globale ---
         logic_frame = ttk.Frame(dialog_frame)
-        logic_frame.grid(row=0, column=0, columnspan=2, sticky='new', padx=5, pady=(5, 2)) # Span 2 colonnes
+        logic_frame.grid(row=0, column=0, columnspan=2, sticky='new', padx=5, pady=(5, 2))
         ttk.Label(logic_frame, text="Logique entre conditions:").pack(side=tk.LEFT, padx=(0, 5))
         self.logic_var = tk.StringVar(value=self.initial_logic)
         self.logic_combo = ttk.Combobox(logic_frame, textvariable=self.logic_var, values=LOGIC_OPERATORS, state="readonly", width=5)
         self.logic_combo.pack(side=tk.LEFT)
         self.logic_combo.bind('<<ComboboxSelected>>', self._update_line_logic_labels)
 
-        # --- Header Labels (En-têtes) ---
         header_frame = ttk.Frame(dialog_frame)
-        header_frame.grid(row=1, column=0, sticky='new', padx=5, pady=(2, 0)) # Colonne 0 seulement
-
-        # Configurer les colonnes DANS le header_frame
+        header_frame.grid(row=1, column=0, sticky='new', padx=5, pady=(2, 0))
         header_frame.columnconfigure(0, weight=0, minsize=self.COL_WIDTHS["logic"])
         header_frame.columnconfigure(1, weight=0, minsize=self.COL_WIDTHS["type"])
-        header_frame.columnconfigure(2, weight=1, minsize=self.COL_WIDTHS["sensor"]) # Col Capteur extensible
+        header_frame.columnconfigure(2, weight=1, minsize=self.COL_WIDTHS["sensor"])
         header_frame.columnconfigure(3, weight=0, minsize=self.COL_WIDTHS["op"])
         header_frame.columnconfigure(4, weight=0, minsize=self.COL_WIDTHS["value"])
         header_frame.columnconfigure(5, weight=0, minsize=self.COL_WIDTHS["delete"])
-
-        # Placer les labels d'en-tête
         ttk.Label(header_frame, text="", anchor='w').grid(row=0, column=0, padx=1, sticky='w')
         ttk.Label(header_frame, text="Type", anchor='w').grid(row=0, column=1, padx=1, sticky='w')
         ttk.Label(header_frame, text="Capteur", anchor='w').grid(row=0, column=2, padx=1, sticky='w')
         ttk.Label(header_frame, text="OP", anchor='w').grid(row=0, column=3, padx=1, sticky='w')
         ttk.Label(header_frame, text="Valeur", anchor='w').grid(row=0, column=4, padx=1, sticky='w')
-        ttk.Label(header_frame, text="", anchor='w').grid(row=0, column=5, padx=1, sticky='w') # Espace pour col X
+        ttk.Label(header_frame, text="", anchor='w').grid(row=0, column=5, padx=1, sticky='w')
 
-        # --- Canvas pour les lignes de conditions ---
         self.conditions_canvas = tk.Canvas(dialog_frame, borderwidth=0, highlightthickness=0)
-        self.conditions_canvas.grid(row=2, column=0, sticky='nsew', padx=(5, 0)) # Colonne 0
-
-        # --- Scrollbar (dans sa propre colonne) ---
+        self.conditions_canvas.grid(row=2, column=0, sticky='nsew', padx=(5, 0))
         scrollbar = ttk.Scrollbar(dialog_frame, orient="vertical", command=self.conditions_canvas.yview)
-        scrollbar.grid(row=2, column=1, sticky='ns') # Colonne 1
-
-        # --- Frame Scrollable (dans le Canvas) ---
+        scrollbar.grid(row=2, column=1, sticky='ns')
         self.scrollable_conditions_frame = ttk.Frame(self.conditions_canvas)
         self.canvas_window = self.conditions_canvas.create_window((0, 0), window=self.scrollable_conditions_frame, anchor="nw")
-
-        # Lier Canvas et Scrollbar
         self.conditions_canvas.configure(yscrollcommand=scrollbar.set)
-
-        # Bindings
         self.scrollable_conditions_frame.bind("<Configure>", self._on_frame_configure)
         self.conditions_canvas.bind("<MouseWheel>", self._on_mousewheel)
         self.conditions_canvas.bind("<Button-4>", self._on_mousewheel)
         self.conditions_canvas.bind("<Button-5>", self._on_mousewheel)
 
-        # --- Bouton Ajouter Condition ---
         add_button_frame = ttk.Frame(dialog_frame)
-        add_button_frame.grid(row=3, column=0, columnspan=2, pady=(10, 5)) # Span 2 colonnes
+        add_button_frame.grid(row=3, column=0, columnspan=2, pady=(10, 5))
         add_button = ttk.Button(add_button_frame, text="➕ Ajouter Condition", command=self._add_condition_line)
-        add_button.pack() # pack au centre de ce frame
+        add_button.pack()
 
-        # --- Boutons OK/Annuler ---
         button_box_frame = ttk.Frame(dialog_frame)
-        button_box_frame.grid(row=4, column=0, columnspan=2, pady=(5, 5)) # Span 2 colonnes
-
+        button_box_frame.grid(row=4, column=0, columnspan=2, pady=(5, 5))
         ok_button = ttk.Button(button_box_frame, text="OK", width=10, command=self.ok, default=tk.ACTIVE)
-        ok_button.pack(side=tk.LEFT, padx=5) # pack dans le frame des boutons
+        ok_button.pack(side=tk.LEFT, padx=5)
         cancel_button = ttk.Button(button_box_frame, text="Annuler", width=10, command=self.cancel)
-        cancel_button.pack(side=tk.LEFT, padx=5) # pack dans le frame des boutons
+        cancel_button.pack(side=tk.LEFT, padx=5)
 
-        # Peupler les conditions initiales APRES avoir défini la structure
         if not self.initial_conditions:
             self._add_condition_line()
         else:
-            for condition_data in self.initial_conditions:
-                self._add_condition_line(condition_data)
+            for condition_data_item in self.initial_conditions: # Renommé pour éviter conflit de nom
+                 self._add_condition_line(condition_data_item) # Passer l'item
 
-        # Ajustements finaux
         self.bind("<Return>", self.ok)
         self.bind("<Escape>", self.cancel)
-        # Taille et focus
-        self.geometry("800x450") # Légèrement plus large
+        self.geometry("800x450")
         self.resizable(True, True)
-        # Appel initial pour ajuster la scrollregion si du contenu existe déjà
-        self.scrollable_conditions_frame.update_idletasks() # S'assurer que la taille est connue
-        self._update_scrollregion() # Mise à jour scroll initiale après peuplement
+        self.scrollable_conditions_frame.update_idletasks()
+        self._update_scrollregion()
 
-        # Retourner le widget qui doit avoir le focus initial (requis par simpledialog)
-        return self.logic_combo
-
-    # --- Méthodes restantes ---
+        return self.logic_combo # Widget pour focus initial
 
     def _on_frame_configure(self, event=None):
         """Met à jour la scrollregion et la largeur de la fenêtre canvas."""
         # ... (Identique à V3) ...
         bbox = self.conditions_canvas.bbox("all")
-        scroll_region_width = bbox[2] + 20 # Marge droite
+        scroll_region_width = bbox[2] + 20
         self.conditions_canvas.configure(scrollregion=(bbox[0], bbox[1], scroll_region_width, bbox[3]))
         self.conditions_canvas.itemconfig(self.canvas_window, width=bbox[2])
 
@@ -200,16 +170,15 @@ class ConditionEditor(simpledialog.Dialog):
 
     def _update_scrollregion(self):
         """Force la mise à jour de la scrollregion."""
-        # ... (Identique à _on_frame_configure) ...
+        # ... (Identique) ...
         self.scrollable_conditions_frame.update_idletasks()
         bbox = self.conditions_canvas.bbox("all")
-        scroll_region_width = bbox[2] + 20 # Marge droite
+        scroll_region_width = bbox[2] + 20
         self.conditions_canvas.configure(scrollregion=(bbox[0], bbox[1], scroll_region_width, bbox[3]))
         self.conditions_canvas.itemconfig(self.canvas_window, width=bbox[2])
 
-    def _add_condition_line(self, condition_data=None):
+    def _add_condition_line(self, condition_data=None): # Accepte condition_data=None
         """Ajoute une ligne de widgets (une condition) en utilisant grid."""
-        # ... (Identique à V3) ...
         line_frame = ttk.Frame(self.scrollable_conditions_frame)
         line_frame.pack(fill=tk.X, expand=True, pady=1)
 
@@ -221,8 +190,23 @@ class ConditionEditor(simpledialog.Dialog):
         line_frame.columnconfigure(5, weight=0, minsize=self.COL_WIDTHS["delete"])
 
         widgets = {}
-        condition_id = condition_data.get('condition_id', f"new_{uuid.uuid4()}")
 
+        # --- CORRECTION AttributeError ---
+        if condition_data:
+            # Données existantes: essayer de récupérer l'ID
+            condition_id = condition_data.get('condition_id')
+            # Si l'ID manque (vieilles données?), en générer un
+            if not condition_id:
+                condition_id = f"new_{uuid.uuid4()}"
+                # Optionnel: ajouter l'ID généré aux données existantes
+                # condition_data['condition_id'] = condition_id
+        else:
+            # Pas de données existantes (nouvelle ligne): générer un nouvel ID
+            condition_id = f"new_{uuid.uuid4()}"
+        # --- FIN CORRECTION ---
+
+        # --- Placer les widgets dans les colonnes avec grid ---
+        # Col 0: Logique/Espaceur
         if len(self.condition_lines) > 0:
             widgets['logic_label'] = ttk.Label(line_frame, text=self.logic_var.get(), width=3, anchor='e')
             widgets['logic_label'].grid(row=0, column=0, padx=(0, 2), sticky='e')
@@ -230,24 +214,29 @@ class ConditionEditor(simpledialog.Dialog):
             widgets['logic_spacer'] = ttk.Frame(line_frame, width=self.COL_WIDTHS["logic"]-5, height=1)
             widgets['logic_spacer'].grid(row=0, column=0, padx=(0, 2))
 
+        # Col 1: Type
         widgets['type_var'] = tk.StringVar()
         widgets['type_combo'] = ttk.Combobox(line_frame, textvariable=widgets['type_var'], values=CONDITION_TYPES, state="readonly", width=12)
         widgets['type_combo'].grid(row=0, column=1, padx=2, sticky='w')
         widgets['type_combo'].bind('<<ComboboxSelected>>', lambda e, lw=widgets, lid=condition_id: self._on_condition_type_change(lw, lid))
 
+        # Col 2: Capteur
         widgets['sensor_var'] = tk.StringVar()
         sensor_names = [""] + sorted([name for name, _id in self.available_sensors])
         widgets['sensor_combo'] = ttk.Combobox(line_frame, textvariable=widgets['sensor_var'], values=sensor_names, state="disabled", width=20)
         widgets['sensor_combo'].grid(row=0, column=2, padx=2, sticky='ew')
 
+        # Col 3: Opérateur
         widgets['operator_var'] = tk.StringVar()
         widgets['operator_combo'] = ttk.Combobox(line_frame, textvariable=widgets['operator_var'], values=OPERATORS, state="readonly", width=4)
         widgets['operator_combo'].grid(row=0, column=3, padx=2, sticky='w')
 
+        # Col 4: Valeur
         widgets['value_var'] = tk.StringVar()
         widgets['value_entry'] = ttk.Entry(line_frame, textvariable=widgets['value_var'], width=10)
         widgets['value_entry'].grid(row=0, column=4, padx=2, sticky='w')
 
+        # Col 5: Bouton Supprimer
         delete_button = ttk.Button(line_frame, text="❌", width=3, style="Red.TButton",
                                    command=lambda frame=line_frame, c_id=condition_id: self._delete_condition_line(frame, c_id))
         delete_button.grid(row=0, column=5, padx=(5, 2), sticky='e')
@@ -255,6 +244,7 @@ class ConditionEditor(simpledialog.Dialog):
         line_info = {'frame': line_frame, 'widgets': widgets, 'condition_id': condition_id}
         self.condition_lines.append(line_info)
 
+        # Peupler données initiales (Utilise la variable condition_data passée en argument)
         if condition_data:
              cond_type_raw = condition_data.get('type')
              cond_type_display = next((ct for ct in CONDITION_TYPES if ct.startswith(cond_type_raw)), '') if cond_type_raw else ''
@@ -270,11 +260,16 @@ class ConditionEditor(simpledialog.Dialog):
                  widgets['value_var'].set(condition_data.get('value', ''))
              self._on_condition_type_change(widgets, condition_id)
         else:
+             # Cas où condition_data est None (nouvelle ligne)
              widgets['type_var'].set(CONDITION_TYPES[0])
              self._on_condition_type_change(widgets, condition_id)
 
         self._update_scrollregion()
 
+    # --- Méthodes restantes ---
+    # _on_condition_type_change, _update_line_logic_labels, _delete_condition_line,
+    # validate, apply sont identiques à la version précédente (Grid V3 Precision)
+    # Pas de méthode buttonbox car géré dans body
 
     def _on_condition_type_change(self, line_widgets, condition_id):
         """Adapte l'UI d'une ligne (visibilité/état) en utilisant grid."""
@@ -311,7 +306,6 @@ class ConditionEditor(simpledialog.Dialog):
                 float(current_val.replace(',', '.'))
                 line_widgets['value_var'].set('')
             except ValueError: pass
-
 
     def _update_line_logic_labels(self, event=None):
         """Met à jour les labels de logique (ET/OU)."""
@@ -351,9 +345,6 @@ class ConditionEditor(simpledialog.Dialog):
             logging.debug(f"Ligne condition ID {condition_id_to_delete} supprimée.")
         else:
             logging.warning(f"Tentative suppr ligne condition non trouvée (ID: {condition_id_to_delete}).")
-
-
-    # Pas de méthode buttonbox() ici, géré dans body()
 
     def validate(self):
         """Valide les données entrées."""
@@ -432,7 +423,7 @@ class ConditionEditor(simpledialog.Dialog):
         else: logging.error("Apply appelé mais les résultats de la validation sont manquants.")
 
 #--------------------------------------------------------------------------
-# FIN CLASSE ConditionEditor (CORRECTION ERREUR FOCUS)
+# FIN CLASSE ConditionEditor (CORRECTION AttributeError)
 #--------------------------------------------------------------------------
 
 
