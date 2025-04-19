@@ -14,7 +14,7 @@ import copy # Pour la copie profonde des conditions
 # Assurez-vous que ces fichiers existent et sont corrects
 try:
     # logger_setup.py (pour la configuration du logging)
-    from test.logger_setupbk import setup_logging
+    from logger_setup import setup_logging
     # discover_device.py (pour la découverte des appareils Kasa)
     from discover_device import DeviceDiscoverer
     # device_control.py (pour le contrôle des appareils Kasa)

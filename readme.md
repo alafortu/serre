@@ -6,19 +6,22 @@ Ce projet fournit une application avec interface graphique (Tkinter) pour automa
 
 Le rapsberry contrôle des prises WIFI connectées de la marque KASA/TP-LINK en combinant une logique liée à des capteurs/sensors branchés au Raspberry Pi. L'application pourrait donc servir à d'autres types d'applications similaires.
 
-Nous avons testé l'application avec 2 capteurs de lumière I2C, 2 capteurs de température et 2 barres KASA KP-303. À priori, on pourrait connecter et contrôler de nombreuses barres de tension à partir de cette application.
+Nous avons testé l'application avec 2 capteurs de lumière I2C, 2 capteurs de température et 2 barres KASA KP-303. Bien que non testé, nous pourrions connecter et contrôler de nombreuses barres de tension à partir de cette application. Avec quelques modifications au code, tous les appareils connectés supportés par la librairie python-Kasa pourraient être ajoutés.
 
-Les barres KP-303 ont une capacité de 1875W et 15A selon le descriptif sur la boîte du fabricant. Il est donc important de prendre le tout en considération dans le projet. 
+Les barres KP-303 ont une capacité de 1875W et 15A selon le descriptif sur la boîte du fabricant. Il est donc important de prendre le tout en considération dans tout projet. 
+
+Notre objectif (non testé à ce jour) est d'automatiser une petite serre extérieure de 8'x10'.
 
 Par exemple, nous comptons utiliser un petit chauffage céramique <= 1500W avec sa propre barre de tension. 
 
-La ventilation, l'arrosage et l'usage de lumières pourraient être activés par d'autres barres de tension. 
+La ventilation, l'arrosage et l'usage de lumières pourraient être activés par d'autres barres de tension ou partiellement automatisé (arrosage) à l'extérieur de cette application.
 
 Utilise un Raspberry Pi pour :
 * Lire des capteurs de température (DS18B20) et de lumière (BH1750).
 * Découvrir et contrôler des multiprises intelligentes (barres de tension) Kasa/TP-Link sur le réseau local.
 * Appliquer des règles définies par l'utilisateur (ex: "Allumer le chauffage si la température < 10°C") pour activer ou désactiver des appareils connectés aux prises Kasa.
 * Sauvegarder la configuration (alias des appareils/capteurs, règles) dans un fichier `config.yaml`.
+
 
 ## 2. Matériel Requis
 
