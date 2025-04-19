@@ -68,14 +68,11 @@ Le protocole I2C utilise des adresses uniques pour chaque appareil sur le bus. L
 
 **Note sur les adresses et le nombre de capteurs :** Ce code est configuré pour rechercher les capteurs BH1750 aux adresses I2C `0x23` et `0x5C`. Comme la plupart des modules BH1750 ne permettent que ces deux adresses, vous ne pouvez connecter directement que **deux capteurs** sur le même bus I2C. Si vous avez besoin de plus de deux capteurs de lumière, vous devrez utiliser un **multiplexeur I2C** (comme le TCA9548A) qui agit comme un aiguillage, permettant de connecter plusieurs appareils avec la même adresse sur des "canaux" différents. L'intégration d'un multiplexeur nécessiterait des modifications dans le code (`light_sensor.py`).
 
-Liste du matériel testé :
+**Liste du matériel testé :**
 
-**Barre Kasa KP-303**
-https://www.amazon.ca/dp/B083JKSSR5
-**BH1750 light sensors**
-https://www.amazon.ca/dp/B0DDCD3VZC
-**Capteurs de température numérique**
-https://www.amazon.ca/dp/B094FKQ9BS
+* Barre Kasa KP-303 : [Lien Amazon.ca](https://www.amazon.ca/dp/B083JKSSR5)
+* Capteurs de lumière BH1750 : [Lien Amazon.ca](https://www.amazon.ca/dp/B0DDCD3VZC)
+* Capteurs de température numérique (DS18B20) : [Lien Amazon.ca](https://www.amazon.ca/dp/B094FKQ9BS)
 
 ## 4. Installation sur Raspberry Pi
 
@@ -97,13 +94,13 @@ Ces étapes supposent que vous partez d'une installation fraîche de Raspberry P
     sudo raspi-config
     ```
     * Naviguez jusqu'à `Interface Options`.
-    ![Interface RASPI-CONFIG](images\rasp-config.jpg)
+    ![Interface RASPI-CONFIG](images/rasp-config.jpg)
     * Activez `I2C`.
-    ![Interface I2C](images\raspi-config-i2c.jpg)
-    ![Interface I2C enable ](images\i2c-enable.jpg)
+    ![Interface I2C](images/raspi-config-i2c.jpg)
+    ![Interface I2C enable ](images/i2c-enable.jpg)
     * Activez `1-Wire`.
-    ![Interface 1-wire](images\raspi-config-1wire.jpg)
-    ![Interface 1-wire enable](images\1-wire-enable.jpg)
+    ![Interface 1-wire](images/raspi-config-1wire.jpg)
+    ![Interface 1-wire enable](images/1-wire-enable.jpg)
 
     * Choisissez `<Finish>` et acceptez de redémarrer (`reboot`) lorsque demandé.
 
