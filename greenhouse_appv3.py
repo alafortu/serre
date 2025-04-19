@@ -174,21 +174,31 @@ class ConditionEditor(simpledialog.Dialog):
         # Retourner le widget pour focus initial (requis par simpledialog)
         return self.logic_combo
 
-    # --- Méthodes restantes ---
-    # _on_frame_configure, _on_mousewheel, _update_scrollregion,
-    # _add_condition_line, _on_condition_type_change, _update_line_logic_labels,
-    # _delete_condition_line, validate, apply
-    # DOIVENT RESTER IDENTIQUES à la version précédente ("CORRECTION AttributeError")
-    # (Je ne les recopie pas ici pour la lisibilité, mais assurez-vous qu'elles sont bien présentes
-    # et inchangées par rapport à ma réponse précédente qui corrigeait l'AttributeError)
+    # --- Méthodes à MODIFIER dans ConditionEditor ---
 
-    # ... (Collez ici les méthodes _on_frame_configure à apply de la version précédente) ...
     def _on_frame_configure(self, event=None):
-        """Met à jour la scrollregion et la largeur de la fenêtre canvas."""
-        bbox = self.conditions_canvas.bbox("all")
-        scroll_region_width = bbox[2] + 20 # Marge droite
-        self.conditions_canvas.configure(scrollregion=(bbox[0], bbox[1], scroll_region_width, bbox[3]))
-        self.conditions_canvas.itemconfig(self.canvas_window, width=bbox[2])
+        """Met à jour la scrollregion en utilisant la taille du frame interne."""
+        # S'assurer que les tailles sont à jour
+        self.scrollable_conditions_frame.update_idletasks()
+        # Obtenir la bounding box du FRAME qui contient les lignes
+        bbox = self.scrollable_conditions_frame.bbox("all")
+        if bbox: # S'assurer qu'on a une bbox valide
+             # Configurer la scrollregion du CANVAS pour correspondre à la taille du FRAME interne
+             # Utilise (0, 0, largeur, hauteur) de la bbox du frame
+             self.conditions_canvas.configure(scrollregion=(0, 0, bbox[2], bbox[3]))
+             # Essayer aussi de régler la largeur de la fenêtre interne du canvas (optionnel mais peut aider)
+             self.conditions_canvas.itemconfig(self.canvas_window, width=bbox[2])
+        else:
+             # Cas où le frame est vide
+             self.conditions_canvas.configure(scrollregion=(0, 0, 1, 1)) # Région minimale
+             self.conditions_canvas.itemconfig(self.canvas_window, width=1)
+
+    def _update_scrollregion(self):
+        """Force la mise à jour de la scrollregion en utilisant la taille du frame interne."""
+        # Appeler la même logique que _on_frame_configure
+        self._on_frame_configure()
+        # Forcer une mise à jour de l'affichage Tkinter si nécessaire (peut être redondant)
+        # self.update_idletasks()
 
     def _on_mousewheel(self, event):
         """Gère le défilement avec la molette."""
@@ -199,14 +209,6 @@ class ConditionEditor(simpledialog.Dialog):
         if delta != 0:
             self.conditions_canvas.yview_scroll(delta, "units")
             return "break"
-
-    def _update_scrollregion(self):
-        """Force la mise à jour de la scrollregion."""
-        self.scrollable_conditions_frame.update_idletasks()
-        bbox = self.conditions_canvas.bbox("all")
-        scroll_region_width = bbox[2] + 20 # Marge droite
-        self.conditions_canvas.configure(scrollregion=(bbox[0], bbox[1], scroll_region_width, bbox[3]))
-        self.conditions_canvas.itemconfig(self.canvas_window, width=bbox[2])
 
     def _add_condition_line(self, condition_data=None): # Accepte condition_data=None
         """Ajoute une ligne de widgets (une condition) en utilisant grid."""
