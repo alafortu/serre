@@ -108,7 +108,7 @@ Ces étapes supposent que vous partez d'une installation fraîche de Raspberry P
 
 1.  **Cloner le dépôt Git :** Ouvrez un terminal et clonez ce projet. Remplacez `URL_DU_DEPOT` par l'URL correcte si vous l'avez forkée ou si elle est différente.
     ```bash
-    git clone [https://github.com/alafortu/serre.git](https://github.com/alafortu/serre.git)
+    git clone https://github.com/alafortu/serre.git
     ```
     *(Si vous n'avez pas Git, installez-le avec `sudo apt install git`)*
 
