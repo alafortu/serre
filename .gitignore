@@ -1,0 +1,55 @@
+# Python bytecode et caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Dossiers utilisateur à ignorer
+test/
+
+# Dossiers d'environnements virtuels courants
+venv/
+env/
+.venv/
+.env/
+*_env/
+env.bak/
+venv.bak/
+
+# Fichiers de configuration d'IDE/Éditeur
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Fichiers spécifiques à certains OS
+.DS_Store
+Thumbs.db
+
+# Fichiers de logs (décommentez si vous ne voulez pas les commiter)
+# *.log
+# greenhouse.log
+
+# Artefacts de build/distribution
+build/
+dist/
+*.egg-info/
+downloads/
+htmlcov/
+*.manifest
+*.spec
+
+# Fichier de configuration (décommentez si vous ne voulez pas le commiter,
+# attention si vous voulez une version par défaut dans le repo)
+# config.yaml
+
+# Autres
+.coverage*
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+nosetests.xml
+coverage.xml
+pip-log.txt
+pip-delete-this-directory.txt
+# etc.

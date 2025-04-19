@@ -1,4 +1,4 @@
-# greenhouse_appv2.py
+# greenhouse_appv3.py
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, simpledialog, font as tkFont
 import asyncio
@@ -14,7 +14,7 @@ import copy # Pour la copie profonde des conditions
 # Assurez-vous que ces fichiers existent et sont corrects
 try:
     # logger_setup.py (pour la configuration du logging)
-    from logger_setupbk import setup_logging
+    from test.logger_setupbk import setup_logging
     # discover_device.py (pour la découverte des appareils Kasa)
     from discover_device import DeviceDiscoverer
     # device_control.py (pour le contrôle des appareils Kasa)
@@ -45,388 +45,365 @@ TIME_OPERATORS = ['<', '>', '=', '!=', '<=', '>='] # Opérateurs pour les condit
 SENSOR_OPERATORS = ['<', '>', '=', '!=', '<=', '>='] # Opérateurs pour les conditions de capteurs
 ACTIONS = ['ON', 'OFF'] # Actions possibles sur les prises
 LOGIC_OPERATORS = ['ET', 'OU'] # Opérateurs logiques entre conditions ('AND', 'OR')
-CONDITION_TYPES = ['Capteur', 'Heure'] # Types de conditions possibles
+CONDITION_TYPES = ['Capteur', 'Heure(HH:MM)'] # Types de conditions possibles
 DEFAULT_CONFIG_FILE = 'config.yaml' # Nom du fichier de configuration
 TIME_REGEX = re.compile(r'^([01]\d|2[0-3]):([0-5]\d)$') # Expression régulière pour valider le format HH:MM
 
 #--------------------------------------------------------------------------
-# CLASSE POUR L'ÉDITEUR DE CONDITIONS (POP-UP)
+# CLASSE POUR L'ÉDITEUR DE CONDITIONS (POP-UP) - SANS SCROLLBAR
 #--------------------------------------------------------------------------
 class ConditionEditor(simpledialog.Dialog):
-    """Fenêtre modale pour éditer une liste de conditions (SI ou JUSQUÀ)."""
+    """Fenêtre modale (non scrollable) pour éditer une liste de conditions."""
 
     def __init__(self, parent, title, rule_id, condition_type,
                  initial_logic, initial_conditions, available_sensors, app_instance):
-        """
-        Initialise l'éditeur de conditions.
-
-        Args:
-            parent: La fenêtre parente (la fenêtre principale de l'application).
-            title (str): Le titre de la fenêtre pop-up.
-            rule_id (str): L'identifiant unique de la règle en cours d'édition.
-            condition_type (str): 'trigger' (pour SI) ou 'until' (pour JUSQU'À).
-            initial_logic (str): L'opérateur logique initial ('ET' ou 'OU').
-            initial_conditions (list): La liste des conditions initiales.
-            available_sensors (list): Liste des capteurs disponibles [(nom, id), ...].
-            app_instance (GreenhouseApp): Référence à l'instance principale de l'application.
-        """
+        """Initialise l'éditeur de conditions."""
         self.rule_id = rule_id
-        self.condition_type = condition_type # 'trigger' or 'until'
+        self.condition_type = condition_type
         self.initial_logic = initial_logic if initial_logic in LOGIC_OPERATORS else LOGIC_OPERATORS[0]
-        # Faire une copie profonde pour éviter de modifier l'original directement via le pop-up
         self.initial_conditions = copy.deepcopy(initial_conditions)
-        self.available_sensors = available_sensors # [(name, id), ...]
-        self.app = app_instance # Référence à GreenhouseApp pour utiliser get_alias
-
-        self.condition_lines = [] # Liste de dict: {'frame': ttk.Frame, 'widgets': dict, 'condition_id': str}
-        self.result_logic = None # Stocke la logique validée ('ET'/'OU')
-        self.result_conditions = None # Stocke la liste des conditions validées
-
-        # Compteur pour générer des IDs uniques pour les *nouvelles* conditions dans cette session
-        self.condition_id_counter = 0
-
-        # Initialisation de la classe parente (simpledialog.Dialog)
+        self.available_sensors = available_sensors
+        self.app = app_instance
+        self.condition_lines = [] # Stocke {'frame': frame, 'widgets': widgets, 'condition_id': cid, 'row': row_num}
+        self.result_logic = None
+        self.result_conditions = None
+        self.condition_id_counter = int(datetime.now().timestamp())
+        self.current_row_index = 0 # Index pour la grille des lignes de conditions
         super().__init__(parent, title=title)
 
-    def body(self, master):
-        """Crée le contenu du corps de la boîte de dialogue."""
-        dialog_frame = ttk.Frame(master, padding="10")
-        dialog_frame.pack(fill=tk.BOTH, expand=True)
+    # Définition des colonnes (X à gauche)
+    COL_WIDTHS = { "delete": 35, "logic": 30, "type": 100, "sensor": 160, "op": 45, "value": 90 }
 
-        # --- Section Logique Globale (ET/OU) ---
+    def body(self, master):
+        """Crée le contenu du corps de la boîte de dialogue sans scrollbar."""
+        dialog_frame = ttk.Frame(master)
+        dialog_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Configurer la colonne principale pour qu'elle s'étende
+        dialog_frame.columnconfigure(0, weight=1)
+
+        # Configurer les lignes
+        dialog_frame.rowconfigure(0, weight=0) # Logic
+        dialog_frame.rowconfigure(1, weight=0) # Header
+        dialog_frame.rowconfigure(2, weight=0) # Frame pour les conditions (ne s'étend pas verticalement par défaut)
+        dialog_frame.rowconfigure(3, weight=0) # Add button
+        # row 4 pour OK/Cancel sera ajoutée par buttonbox()
+
+        # --- Section Logique Globale ---
         logic_frame = ttk.Frame(dialog_frame)
-        logic_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 10))
+        logic_frame.grid(row=0, column=0, sticky='new', padx=5, pady=(5, 2))
         ttk.Label(logic_frame, text="Logique entre conditions:").pack(side=tk.LEFT, padx=(0, 5))
         self.logic_var = tk.StringVar(value=self.initial_logic)
         self.logic_combo = ttk.Combobox(logic_frame, textvariable=self.logic_var, values=LOGIC_OPERATORS, state="readonly", width=5)
         self.logic_combo.pack(side=tk.LEFT)
+        self.logic_combo.bind('<<ComboboxSelected>>', self._update_line_logic_labels)
 
-        # --- Zone Scrollable pour les Conditions ---
-        conditions_container = ttk.Frame(dialog_frame)
-        conditions_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        # --- Header Labels (En-têtes) ---
+        header_frame = ttk.Frame(dialog_frame)
+        header_frame.grid(row=1, column=0, sticky='new', padx=5, pady=(2, 0))
+        # Configurer les colonnes DANS le header_frame
+        header_frame.columnconfigure(0, weight=0, minsize=self.COL_WIDTHS["delete"])
+        header_frame.columnconfigure(1, weight=0, minsize=self.COL_WIDTHS["logic"])
+        header_frame.columnconfigure(2, weight=0, minsize=self.COL_WIDTHS["type"])
+        header_frame.columnconfigure(3, weight=1, minsize=self.COL_WIDTHS["sensor"]) # Sensor extensible
+        header_frame.columnconfigure(4, weight=0, minsize=self.COL_WIDTHS["op"])
+        header_frame.columnconfigure(5, weight=0, minsize=self.COL_WIDTHS["value"])
+        # Placer les labels d'en-tête
+        ttk.Label(header_frame, text="", anchor='w').grid(row=0, column=0, padx=1, sticky='w')
+        ttk.Label(header_frame, text="", anchor='w').grid(row=0, column=1, padx=1, sticky='w')
+        ttk.Label(header_frame, text="Type", anchor='w').grid(row=0, column=2, padx=1, sticky='w')
+        ttk.Label(header_frame, text="Capteur", anchor='w').grid(row=0, column=3, padx=1, sticky='w')
+        ttk.Label(header_frame, text="OP", anchor='w').grid(row=0, column=4, padx=1, sticky='w')
+        ttk.Label(header_frame, text="Valeur", anchor='w').grid(row=0, column=5, padx=1, sticky='w')
 
-        # Canvas pour contenir le frame scrollable
-        self.conditions_canvas = tk.Canvas(conditions_container, borderwidth=0, highlightthickness=0)
-        # Scrollbar verticale liée au canvas
-        scrollbar = ttk.Scrollbar(conditions_container, orient="vertical", command=self.conditions_canvas.yview)
-        # Frame interne qui contiendra les lignes de conditions
-        self.scrollable_conditions_frame = ttk.Frame(self.conditions_canvas)
-
-        # Quand le frame interne change de taille, on met à jour la scrollregion du canvas
-        self.scrollable_conditions_frame.bind("<Configure>", self._on_frame_configure)
-
-        # Placer le frame interne dans le canvas
-        self.canvas_window = self.conditions_canvas.create_window((0, 0), window=self.scrollable_conditions_frame, anchor="nw")
-        # Configurer le canvas pour utiliser la scrollbar
-        self.conditions_canvas.configure(yscrollcommand=scrollbar.set)
-
-        # Empaqueter le canvas et la scrollbar
-        self.conditions_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # Lier la molette de la souris au canvas pour le défilement
-        # Utiliser bind (pas bind_all) pour éviter des conflits potentiels
-        self.conditions_canvas.bind("<MouseWheel>", self._on_mousewheel) # Windows
-        self.conditions_canvas.bind("<Button-4>", self._on_mousewheel) # Linux scroll up
-        self.conditions_canvas.bind("<Button-5>", self._on_mousewheel) # Linux scroll down
-
-        # --- Peupler les conditions initiales ---
-        if not self.initial_conditions:
-             # S'il n'y a pas de condition initiale, ajouter une ligne vide
-             self._add_condition_line()
-        else:
-             # Sinon, ajouter une ligne pour chaque condition existante
-             for condition_data in self.initial_conditions:
-                 self._add_condition_line(condition_data)
+        # --- Frame pour contenir les lignes de conditions (PAS de Canvas/Scrollbar) ---
+        # Renommé pour plus de clarté
+        self.conditions_lines_frame = ttk.Frame(dialog_frame)
+        self.conditions_lines_frame.grid(row=2, column=0, sticky='new', padx=5)
+        # Configurer la colonne unique de ce frame pour qu'elle s'étende
+        self.conditions_lines_frame.columnconfigure(0, weight=1)
 
         # --- Bouton Ajouter Condition ---
         add_button_frame = ttk.Frame(dialog_frame)
-        add_button_frame.pack(side=tk.TOP, fill=tk.X, pady=(10, 0))
+        add_button_frame.grid(row=3, column=0, pady=(10, 5))
         add_button = ttk.Button(add_button_frame, text="➕ Ajouter Condition", command=self._add_condition_line)
         add_button.pack()
 
-        # Ajuster la taille initiale du pop-up et le rendre redimensionnable
-        self.geometry("750x450")
-        self.resizable(True, True)
+        # --- Peuplement initial ---
+        self.current_row_index = 0 # Initialiser l'index de ligne pour la grille
+        if not self.initial_conditions:
+            self._add_condition_line()
+        else:
+            for condition_data_item in self.initial_conditions:
+                 self._add_condition_line(condition_data_item)
 
-        self._update_scrollregion() # Mise à jour initiale de la scrollregion
+        # --- Ajustements finaux ---
+        # Pas besoin de configurer la géométrie initiale si on n'a pas de scroll
+        # self.geometry("800x450")
+        self.resizable(True, True) # Garder redimensionnable
 
-        return self.logic_combo # Mettre le focus initial sur le combobox de logique
+        # Focus initial
+        # Attention: simpledialog attend un retour de body pour le focus.
+        # Si on ne retourne rien, le focus peut aller sur le premier bouton par défaut.
+        # Retourner logic_combo est généralement bien.
+        return self.logic_combo
 
-    def _on_frame_configure(self, event=None):
-        """Met à jour la scrollregion du canvas quand le frame interne change de taille."""
-        # bbox("all") renvoie les dimensions actuelles de tout le contenu du canvas
-        self.conditions_canvas.configure(scrollregion=self.conditions_canvas.bbox("all"))
-
-    def _on_mousewheel(self, event):
-        """Gère le défilement avec la molette de la souris."""
-        delta = 0
-        # Déterminer la direction du scroll selon le système d'exploitation
-        if event.num == 5: # Linux scroll down
-            delta = 1
-        elif event.num == 4: # Linux scroll up
-            delta = -1
-        elif hasattr(event, 'delta'): # Windows
-             if event.delta < 0: # Windows scroll down
-                 delta = 1
-             elif event.delta > 0: # Windows scroll up
-                 delta = -1
-
-        if delta != 0:
-            # Faire défiler le canvas verticalement
-            self.conditions_canvas.yview_scroll(delta, "units")
-            # Empêcher l'événement de se propager (optionnel, évite le scroll de la fenêtre principale)
-            return "break"
-
-    def _update_scrollregion(self):
-        """Force la mise à jour de la scrollregion du canvas."""
-        # S'assurer que Tkinter a traité les changements de taille avant de calculer la bbox
-        self.scrollable_conditions_frame.update_idletasks()
-        self.conditions_canvas.configure(scrollregion=self.conditions_canvas.bbox("all"))
+    # PAS BESOIN de _on_frame_configure, _on_mousewheel, _update_scrollregion
 
     def _add_condition_line(self, condition_data=None):
-        """Ajoute une ligne de widgets (une condition) dans le frame scrollable."""
-        line_frame = ttk.Frame(self.scrollable_conditions_frame, padding=2)
-        line_frame.pack(fill=tk.X, expand=True, pady=1)
+        """Ajoute une ligne de widgets dans conditions_lines_frame."""
+        # Frame pour la ligne, placé dans la GRILLE de conditions_lines_frame
+        line_frame = ttk.Frame(self.conditions_lines_frame)
+        current_grid_row = self.current_row_index
+        # Placer le frame de la ligne dans la grille du conteneur principal des lignes
+        line_frame.grid(row=current_grid_row, column=0, sticky='ew', pady=1)
+        self.current_row_index += 1
 
-        widgets = {} # Dictionnaire pour stocker les widgets de cette ligne
-        # Générer un ID unique pour la condition (soit existant, soit nouveau)
-        condition_id = condition_data.get('condition_id', f"new_{self.condition_id_counter}") if condition_data else f"new_{self.condition_id_counter}"
-        self.condition_id_counter += 1
+        # Configurer les colonnes DANS le line_frame (identique à l'en-tête)
+        line_frame.columnconfigure(0, weight=0, minsize=self.COL_WIDTHS["delete"])
+        line_frame.columnconfigure(1, weight=0, minsize=self.COL_WIDTHS["logic"])
+        line_frame.columnconfigure(2, weight=0, minsize=self.COL_WIDTHS["type"])
+        line_frame.columnconfigure(3, weight=1, minsize=self.COL_WIDTHS["sensor"])
+        line_frame.columnconfigure(4, weight=0, minsize=self.COL_WIDTHS["op"])
+        line_frame.columnconfigure(5, weight=0, minsize=self.COL_WIDTHS["value"])
 
-        # 1. Type de condition (Capteur/Heure)
+        widgets = {}
+        if condition_data:
+            condition_id = condition_data.get('condition_id', f"new_{uuid.uuid4()}")
+        else:
+            condition_id = f"new_{uuid.uuid4()}"
+
+        # --- Placer les widgets dans les colonnes du line_frame ---
+        # Col 0: Bouton Supprimer
+        delete_button = ttk.Button(line_frame, text="❌", width=3, style="Red.TButton",
+                                   # Passer la ligne de grille actuelle à la commande
+                                   command=lambda frame=line_frame, c_id=condition_id, row=current_grid_row: self._delete_condition_line(frame, c_id, row))
+        delete_button.grid(row=0, column=0, padx=(2, 5), sticky='w')
+
+        # Col 1: Logique/Espaceur
+        # Utiliser len(self.condition_lines) car on n'a pas encore ajouté la ligne courante
+        if len(self.condition_lines) > 0:
+            widgets['logic_label'] = ttk.Label(line_frame, text=self.logic_var.get(), width=3, anchor='e')
+            widgets['logic_label'].grid(row=0, column=1, padx=(0, 2), sticky='e')
+        else:
+            widgets['logic_spacer'] = ttk.Frame(line_frame, width=self.COL_WIDTHS["logic"]-5, height=1)
+            widgets['logic_spacer'].grid(row=0, column=1, padx=(0, 2))
+
+        # Col 2: Type
         widgets['type_var'] = tk.StringVar()
-        widgets['type_combo'] = ttk.Combobox(line_frame, textvariable=widgets['type_var'], values=CONDITION_TYPES, state="readonly", width=8)
-        widgets['type_combo'].pack(side=tk.LEFT, padx=2)
-        # Lier l'événement de sélection pour adapter l'UI
-        widgets['type_combo'].bind('<<ComboboxSelected>>', lambda e, lw=widgets: self._on_condition_type_change(lw))
+        widgets['type_combo'] = ttk.Combobox(line_frame, textvariable=widgets['type_var'], values=CONDITION_TYPES, state="readonly", width=12)
+        widgets['type_combo'].grid(row=0, column=2, padx=2, sticky='w')
+        widgets['type_combo'].bind('<<ComboboxSelected>>', lambda e, lw=widgets, lid=condition_id: self._on_condition_type_change(lw, lid))
 
-        # 2. Sélecteur de Capteur (activé seulement si Type='Capteur')
+        # Col 3: Capteur
         widgets['sensor_var'] = tk.StringVar()
-        # Trier les noms de capteurs pour l'affichage, ajouter une option vide
         sensor_names = [""] + sorted([name for name, _id in self.available_sensors])
         widgets['sensor_combo'] = ttk.Combobox(line_frame, textvariable=widgets['sensor_var'], values=sensor_names, state="disabled", width=20)
-        widgets['sensor_combo'].pack(side=tk.LEFT, padx=2)
+        widgets['sensor_combo'].grid(row=0, column=3, padx=2, sticky='ew')
 
-        # 3. Opérateur de comparaison (<, >, =, etc.)
+        # Col 4: Opérateur
         widgets['operator_var'] = tk.StringVar()
         widgets['operator_combo'] = ttk.Combobox(line_frame, textvariable=widgets['operator_var'], values=OPERATORS, state="readonly", width=4)
-        widgets['operator_combo'].pack(side=tk.LEFT, padx=2)
+        widgets['operator_combo'].grid(row=0, column=4, padx=2, sticky='w')
 
-        # 4. Valeur (seuil numérique ou heure HH:MM)
+        # Col 5: Valeur
         widgets['value_var'] = tk.StringVar()
         widgets['value_entry'] = ttk.Entry(line_frame, textvariable=widgets['value_var'], width=10)
-        widgets['value_entry'].pack(side=tk.LEFT, padx=2)
+        widgets['value_entry'].grid(row=0, column=5, padx=2, sticky='w')
 
-        # 5. Bouton Supprimer (-)
-        delete_button = ttk.Button(line_frame, text="➖", width=2, style="Red.TButton",
-                                  command=lambda frame=line_frame: self._delete_condition_line(frame))
-        delete_button.pack(side=tk.RIGHT, padx=5)
+        # Stocker info (inclut la ligne de grille pour la suppression/maj)
+        line_info = {'frame': line_frame, 'widgets': widgets, 'condition_id': condition_id, 'row': current_grid_row}
+        self.condition_lines.append(line_info) # Ajouter APRES avoir vérifié len() pour le label logique
 
-        # Stocker les informations de la ligne
-        line_info = {'frame': line_frame, 'widgets': widgets, 'condition_id': condition_id}
-        self.condition_lines.append(line_info)
-
-        # Si des données initiales sont fournies, peupler les widgets
+        # Peupler données initiales
         if condition_data:
-            cond_type = condition_data.get('type')
-            widgets['type_var'].set(cond_type if cond_type in CONDITION_TYPES else '')
-            widgets['operator_var'].set(condition_data.get('operator', ''))
-
-            if cond_type == 'Capteur':
-                sensor_id = condition_data.get('id')
-                # Utiliser l'alias du capteur s'il existe
-                sensor_name = self.app.get_alias('sensor', sensor_id) if sensor_id else ''
-                widgets['sensor_var'].set(sensor_name if sensor_name in sensor_names else "")
-                widgets['value_var'].set(str(condition_data.get('threshold', '')))
-            elif cond_type == 'Heure':
-                widgets['value_var'].set(condition_data.get('value', '')) # Format HH:MM
-
-            # Mettre à jour l'état des widgets (activer/désactiver, valeurs possibles)
-            self._on_condition_type_change(widgets)
+             # ... (Logique de peuplement identique) ...
+             cond_type_raw = condition_data.get('type')
+             cond_type_display = next((ct for ct in CONDITION_TYPES if ct.startswith(cond_type_raw)), '') if cond_type_raw else ''
+             widgets['type_var'].set(cond_type_display)
+             widgets['operator_var'].set(condition_data.get('operator', ''))
+             if cond_type_raw == 'Capteur':
+                 sensor_id = condition_data.get('id')
+                 sensor_name = self.app.get_alias('sensor', sensor_id) if sensor_id else ''
+                 valid_sensor_names = [name for name, _id in self.available_sensors]
+                 widgets['sensor_var'].set(sensor_name if sensor_name in valid_sensor_names else "")
+                 widgets['value_var'].set(str(condition_data.get('threshold', '')))
+             elif cond_type_raw == 'Heure':
+                 widgets['value_var'].set(condition_data.get('value', ''))
+             self._on_condition_type_change(widgets, condition_id)
         else:
-            # Si c'est une nouvelle ligne, initialiser avec le premier type
              widgets['type_var'].set(CONDITION_TYPES[0])
-             self._on_condition_type_change(widgets)
+             self._on_condition_type_change(widgets, condition_id)
 
-        # Mettre à jour la scrollregion après ajout
-        self._update_scrollregion()
+        # Pas besoin d'_update_scrollregion
 
-    def _on_condition_type_change(self, line_widgets):
-        """Adapte l'UI d'une ligne (activer/désactiver widgets, changer opérateurs) quand le type de condition change."""
-        selected_type = line_widgets['type_var'].get()
-        current_op = line_widgets['operator_var'].get() # Opérateur actuel
+    def _on_condition_type_change(self, line_widgets, condition_id):
+        """Adapte l'UI d'une ligne en utilisant grid."""
+        # ... (Identique à la version Grid V4 - X à gauche) ...
+        selected_type_display = line_widgets['type_var'].get()
+        selected_type_internal = 'Heure' if selected_type_display.startswith('Heure') else 'Capteur'
+        current_op = line_widgets['operator_var'].get()
+        current_val = line_widgets['value_var'].get()
+        sensor_combo = line_widgets['sensor_combo']
+        operator_combo = line_widgets['operator_combo']
+        value_entry = line_widgets['value_entry']
+        sensor_col, operator_col, value_col = 3, 4, 5
 
-        if selected_type == 'Capteur':
-            # Activer le sélecteur de capteur et l'entrée de valeur
-            line_widgets['sensor_combo'].config(state="readonly")
-            line_widgets['value_entry'].config(state="normal")
-            # Définir les opérateurs valides pour les capteurs
-            line_widgets['operator_combo'].config(values=SENSOR_OPERATORS)
-            # Si l'opérateur actuel n'est pas valide, le réinitialiser
+        if selected_type_internal == 'Capteur':
+            sensor_combo.config(state="readonly")
+            sensor_combo.grid(row=0, column=sensor_col, padx=2, sticky='ew')
+            operator_combo.grid(row=0, column=operator_col, padx=2, sticky='w')
+            value_entry.grid(row=0, column=value_col, padx=2, sticky='w')
+            value_entry.config(state="normal")
+            operator_combo.config(values=SENSOR_OPERATORS)
             if current_op not in SENSOR_OPERATORS: line_widgets['operator_var'].set('')
-            # Si la valeur ressemble à une heure, la vider
-            if ':' in line_widgets['value_var'].get(): line_widgets['value_var'].set('')
-        elif selected_type == 'Heure':
-            # Désactiver le sélecteur de capteur et vider sa valeur
-            line_widgets['sensor_combo'].config(state="disabled"); line_widgets['sensor_var'].set("")
-            # Activer l'entrée de valeur
-            line_widgets['value_entry'].config(state="normal")
-            # Définir les opérateurs valides pour l'heure
-            line_widgets['operator_combo'].config(values=TIME_OPERATORS)
-            # Si l'opérateur actuel n'est pas valide, le réinitialiser
-            if current_op not in TIME_OPERATORS: line_widgets['operator_var'].set('')
-            # Si la valeur ressemble à un nombre, la vider (pour forcer HH:MM)
-            try: float(line_widgets['value_var'].get()); line_widgets['value_var'].set('')
-            except ValueError: pass # Ignorer si ce n'est pas un nombre
-        else: # Cas où aucun type n'est sélectionné (ne devrait pas arriver avec combobox readonly)
-            line_widgets['sensor_combo'].config(state="disabled"); line_widgets['sensor_var'].set("")
-            line_widgets['value_entry'].config(state="disabled"); line_widgets['value_var'].set("")
-            line_widgets['operator_combo'].config(values=OPERATORS) # Revenir aux opérateurs génériques
-            line_widgets['operator_var'].set('') # Réinitialiser l'opérateur
+            if TIME_REGEX.match(current_val): line_widgets['value_var'].set('')
 
-    def _delete_condition_line(self, line_frame_to_delete):
-        """Supprime une ligne de condition de l'UI et de la liste interne."""
-        index_to_delete = -1
-        # Trouver l'index de la ligne à supprimer dans notre liste
+        elif selected_type_internal == 'Heure':
+            sensor_combo.grid_remove()
+            sensor_combo.config(state="disabled"); line_widgets['sensor_var'].set("")
+            operator_combo.grid(row=0, column=operator_col, padx=2, sticky='w')
+            value_entry.grid(row=0, column=value_col, padx=2, sticky='w')
+            value_entry.config(state="normal")
+            operator_combo.config(values=TIME_OPERATORS)
+            if current_op not in TIME_OPERATORS: line_widgets['operator_var'].set('')
+            try:
+                float(current_val.replace(',', '.'))
+                line_widgets['value_var'].set('')
+            except ValueError: pass
+
+    def _update_line_logic_labels(self, event=None):
+        """Met à jour les labels de logique."""
+        # ... (Identique) ...
+        new_logic = self.logic_var.get()
         for i, line_info in enumerate(self.condition_lines):
-            if line_info['frame'] == line_frame_to_delete:
+            if i > 0 and 'logic_label' in line_info['widgets']:
+                try:
+                    if line_info['widgets']['logic_label'].winfo_exists():
+                        line_info['widgets']['logic_label'].config(text=new_logic)
+                except tk.TclError: pass
+
+    def _delete_condition_line(self, line_frame_to_delete, condition_id_to_delete, row_to_delete):
+        """Supprime une ligne de condition (frame et de la liste) et ajuste les suivantes."""
+        index_to_delete = -1
+        for i, line_info in enumerate(self.condition_lines):
+            if line_info['condition_id'] == condition_id_to_delete:
                 index_to_delete = i
                 break
 
         if index_to_delete != -1:
-            # Supprimer de la liste interne
-            del self.condition_lines[index_to_delete]
-            # Détruire le frame Tkinter associé
+            # Détruire le frame de la ligne (le retire de la grille)
             line_frame_to_delete.destroy()
-            # Mettre à jour la scrollregion
-            self._update_scrollregion()
-            logging.debug(f"Ligne condition {index_to_delete} supprimée.")
+            # Retirer de la liste interne
+            del self.condition_lines[index_to_delete]
+
+            # Décaler les 'row' des lignes suivantes dans notre liste interne
+            # Et les replacer dans la grille à la nouvelle position
+            for i in range(index_to_delete, len(self.condition_lines)):
+                self.condition_lines[i]['row'] -= 1
+                # Re-grider le frame à la nouvelle ligne
+                self.condition_lines[i]['frame'].grid(row=self.condition_lines[i]['row'], column=0, sticky='ew', pady=1)
+
+            # Mettre à jour l'index pour la prochaine ligne à ajouter
+            self.current_row_index -= 1
+
+            # Gérer le label/spacer de la NOUVELLE première ligne (col 1)
+            if index_to_delete == 0 and len(self.condition_lines) > 0:
+                new_first_line_widgets = self.condition_lines[0]['widgets']
+                if 'logic_label' in new_first_line_widgets:
+                    try:
+                        if new_first_line_widgets['logic_label'].winfo_exists():
+                            new_first_line_widgets['logic_label'].destroy()
+                        del new_first_line_widgets['logic_label']
+                        new_first_line_widgets['logic_spacer'] = ttk.Frame(self.condition_lines[0]['frame'], width=self.COL_WIDTHS["logic"]-5, height=1)
+                        new_first_line_widgets['logic_spacer'].grid(row=0, column=1, padx=(0, 2)) # Col 1
+                    except tk.TclError: pass
+
+            # Pas besoin d'_update_scrollregion
+            self._update_line_logic_labels() # Mettre à jour les labels logiques
+            logging.debug(f"Ligne condition ID {condition_id_to_delete} (était row {row_to_delete}) supprimée.")
         else:
-            logging.warning("Tentative de suppression d'une ligne de condition non trouvée.")
+            logging.warning(f"Tentative suppr ligne non trouvée (ID: {condition_id_to_delete}).")
 
-    def buttonbox(self):
-        """Crée les boutons OK et Annuler en bas du pop-up."""
-        box = ttk.Frame(self)
-        ok_button = ttk.Button(box, text="OK", width=10, command=self.ok, default=tk.ACTIVE)
-        ok_button.pack(side=tk.LEFT, padx=5, pady=5)
-        cancel_button = ttk.Button(box, text="Annuler", width=10, command=self.cancel)
-        cancel_button.pack(side=tk.LEFT, padx=5, pady=5)
-
-        # Lier les touches Entrée et Echap aux actions OK et Annuler
-        self.bind("<Return>", self.ok)
-        self.bind("<Escape>", self.cancel)
-
-        box.pack()
+    # Laisser simpledialog gérer les boutons OK/Cancel par défaut
+    # def buttonbox(self):
+    #    pass
 
     def validate(self):
-        """Valide les données entrées dans toutes les lignes avant de fermer avec OK."""
+        """Valide les données entrées."""
+        # ... (Identique) ...
         logging.debug("Validation éditeur conditions...")
         validated_conditions = []
         logic = self.logic_var.get()
-
-        # Vérifier que la logique globale (ET/OU) est sélectionnée
         if not logic:
             messagebox.showwarning("Validation", "Veuillez sélectionner une logique globale (ET/OU).", parent=self)
-            return 0 # Échec validation
-
-        # Permettre 0 condition (cela désactive la clause SI ou JUSQU'À correspondante)
+            return 0
         if not self.condition_lines:
-             logging.debug("Validation OK (aucune condition spécifiée).")
-             self.result_logic = logic
-             self.result_conditions = []
-             return 1 # Validation réussie
-
-        # Parcourir chaque ligne de condition pour la valider
+            self.result_logic = logic
+            self.result_conditions = []
+            return 1
         for i, line_info in enumerate(self.condition_lines):
             widgets = line_info['widgets']
-            condition_data = {'condition_id': line_info['condition_id']} # Préparer le dict de sortie
-
-            cond_type = widgets['type_var'].get()
+            condition_data = {'condition_id': line_info['condition_id']}
+            cond_type_display = widgets['type_var'].get()
+            cond_type_internal = 'Heure' if cond_type_display.startswith('Heure') else 'Capteur'
             operator = widgets['operator_var'].get()
-            value_str = widgets['value_var'].get().strip() # Valeur entrée, sans espaces superflus
-
-            # --- Vérifications communes ---
-            if not cond_type:
-                messagebox.showwarning("Validation", f"Ligne {i+1}: Veuillez sélectionner un type de condition (Capteur ou Heure).", parent=self)
+            value_str = widgets['value_var'].get().strip()
+            if not cond_type_display:
+                messagebox.showwarning("Validation", f"Ligne {i+1}: Veuillez sélectionner un type.", parent=self)
                 return 0
-            condition_data['type'] = cond_type
-
+            condition_data['type'] = cond_type_internal
             if not operator:
                 messagebox.showwarning("Validation", f"Ligne {i+1}: Veuillez sélectionner un opérateur.", parent=self)
                 return 0
             condition_data['operator'] = operator
-
             if not value_str:
                 messagebox.showwarning("Validation", f"Ligne {i+1}: Veuillez entrer une valeur.", parent=self)
                 return 0
-
-            # --- Vérifications spécifiques au type ---
-            if cond_type == 'Capteur':
+            if cond_type_internal == 'Capteur':
                 sensor_name = widgets['sensor_var'].get()
                 if not sensor_name:
                     messagebox.showwarning("Validation", f"Ligne {i+1}: Veuillez sélectionner un capteur.", parent=self)
                     return 0
-                # Trouver l'ID du capteur basé sur son nom (alias)
                 sensor_id = next((sid for name, sid in self.available_sensors if name == sensor_name), None)
                 if not sensor_id:
-                    # Devrait être rare si la liste est à jour, mais sécurité
-                    messagebox.showwarning("Validation", f"Ligne {i+1}: Capteur '{sensor_name}' invalide ou non trouvé.", parent=self)
+                    messagebox.showwarning("Validation", f"Ligne {i+1}: Capteur '{sensor_name}' invalide.", parent=self)
                     return 0
-                condition_data['id'] = sensor_id # Stocker l'ID, pas le nom
-
-                # Valider que la valeur est un nombre
-                try:
-                    condition_data['threshold'] = float(value_str.replace(',', '.')) # Accepter virgule ou point
+                condition_data['id'] = sensor_id
+                try: condition_data['threshold'] = float(value_str.replace(',', '.'))
                 except ValueError:
-                    messagebox.showwarning("Validation", f"Ligne {i+1}: Le seuil '{value_str}' est invalide. Entrez une valeur numérique.", parent=self)
+                    messagebox.showwarning("Validation", f"Ligne {i+1}: Seuil '{value_str}' invalide (numérique attendu).", parent=self)
                     return 0
-
-                # Vérifier si l'opérateur est valide pour un capteur
                 if operator not in SENSOR_OPERATORS:
-                     messagebox.showwarning("Validation", f"Ligne {i+1}: L'opérateur '{operator}' n'est pas valide pour une condition de capteur.", parent=self)
+                     messagebox.showwarning("Validation", f"Ligne {i+1}: Opérateur '{operator}' invalide pour Capteur.", parent=self)
                      return 0
-
-            elif cond_type == 'Heure':
-                # Valider le format HH:MM
+            elif cond_type_internal == 'Heure':
                 if not TIME_REGEX.match(value_str):
-                    messagebox.showwarning("Validation", f"Ligne {i+1}: L'heure '{value_str}' est invalide. Utilisez le format HH:MM (ex: 14:30).", parent=self)
+                    messagebox.showwarning("Validation", f"Ligne {i+1}: Heure '{value_str}' invalide (format HH:MM attendu).", parent=self)
                     return 0
-                condition_data['value'] = value_str # Stocker la chaîne HH:MM
-                condition_data['id'] = None # Pas d'ID pour une condition d'heure
-
-                # Vérifier si l'opérateur est valide pour l'heure
+                condition_data['value'] = value_str
+                condition_data['id'] = None
                 if operator not in TIME_OPERATORS:
-                     messagebox.showwarning("Validation", f"Ligne {i+1}: L'opérateur '{operator}' n'est pas valide pour une condition d'heure.", parent=self)
+                     messagebox.showwarning("Validation", f"Ligne {i+1}: Opérateur '{operator}' invalide pour Heure.", parent=self)
                      return 0
-
-            # Si tout est bon pour cette ligne, ajouter au résultat
             validated_conditions.append(condition_data)
-
-        # Stocker les résultats validés
         self.result_logic = logic
         self.result_conditions = validated_conditions
         logging.debug(f"Validation éditeur OK. Logique: {self.result_logic}, Conditions: {len(self.result_conditions)}")
-        return 1 # Validation réussie pour toutes les lignes
+        return 1
 
     def apply(self):
-        """Appelé automatiquement par simpledialog si validate() retourne True."""
-        # Vérifier que les résultats ont bien été stockés par validate()
+        """Applique les changements."""
+        # ... (Identique) ...
         if self.result_logic is not None and self.result_conditions is not None:
             logging.info(f"Application des changements de l'éditeur pour règle {self.rule_id}, type {self.condition_type}")
-            # Appeler la méthode de l'application principale pour mettre à jour la règle
             self.app.update_rule_conditions_from_editor(
-                self.rule_id,
-                self.condition_type,
-                self.result_logic,
-                self.result_conditions
+                self.rule_id, self.condition_type, self.result_logic, self.result_conditions
             )
-        else:
-            # Ne devrait pas arriver si validate() a réussi, mais sécurité
-            logging.error("Apply appelé mais les résultats de la validation sont manquants.")
+        else: logging.error("Apply appelé mais les résultats de la validation sont manquants.")
 
 #--------------------------------------------------------------------------
-# FIN CLASSE ConditionEditor
+# FIN CLASSE ConditionEditor (SANS SCROLLBAR)
 #--------------------------------------------------------------------------
 
 
@@ -650,11 +627,11 @@ class GreenhouseApp:
         # --- Section Contrôles (Démarrer/Arrêter/Sauvegarder) ---
         control_frame = ttk.Frame(main_frame, padding="10")
         control_frame.pack(fill=tk.X, expand=False, pady=5)
-        self.start_button = ttk.Button(control_frame, text="🟢 Gérer ma Serre", command=self.start_monitoring)
+        self.start_button = ttk.Button(control_frame, text="Gérer ma Serre", command=self.start_monitoring)
         self.start_button.pack(side=tk.LEFT, padx=5)
-        self.stop_button = ttk.Button(control_frame, text="🔴 Arrêter", command=self.stop_monitoring, state=tk.DISABLED)
+        self.stop_button = ttk.Button(control_frame, text="Arrêter", command=self.stop_monitoring, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, padx=5)
-        save_button = ttk.Button(control_frame, text="💾 Sauvegarder Configuration", command=self.save_configuration)
+        save_button = ttk.Button(control_frame, text="Sauvegarder Configuration", command=self.save_configuration)
         save_button.pack(side=tk.RIGHT, padx=5) # Placé à droite
 
         # --- Panneau Divisé pour Statut et Logs ---
@@ -1513,6 +1490,8 @@ class GreenhouseApp:
         self.schedule_periodic_updates()
         logging.info("Monitoring démarré.")
 
+    # Modifiez la fonction stop_monitoring dans GreenhouseApp
+
     def stop_monitoring(self):
         """Arrête le thread de monitoring, met à jour l'UI et éteint les prises."""
         if not self.monitoring_active:
@@ -1525,12 +1504,15 @@ class GreenhouseApp:
         # Annuler les mises à jour périodiques de l'UI
         self.cancel_periodic_updates()
 
+        # NOUVEAU: Mettre à jour les labels Kasa dans l'UI immédiatement
+        # Utiliser after(0) pour s'assurer que cela s'exécute dans le thread Tkinter principal
+        self.root.after(0, self._set_kasa_status_labels_to_stopped)
+
         # Attendre que le thread de monitoring se termine (avec un timeout)
         if self.monitoring_thread and self.monitoring_thread.is_alive():
             logging.info("Attente de la fin du thread de monitoring (max 5 secondes)...")
             self.monitoring_thread.join(timeout=5.0)
             if self.monitoring_thread.is_alive():
-                # Si le thread ne s'est pas arrêté à temps
                 logging.warning("Le thread de monitoring n'a pas pu être arrêté dans le délai imparti.")
             else:
                 logging.info("Thread de monitoring terminé proprement.")
@@ -1551,6 +1533,22 @@ class GreenhouseApp:
 
         logging.info("Processus d'arrêt du monitoring terminé.")
 
+    def _set_kasa_status_labels_to_stopped(self):
+        """Met le texte des labels de statut des prises Kasa à 'OFF'."""
+        logging.debug("Mise à jour des labels Kasa UI à OFF après arrêt monitoring.")
+        for key, data in self.status_labels.items():
+             # Vérifier si c'est une entrée de prise et si le widget label existe
+            if data.get('type') == 'outlet' and 'label_value' in data:
+                label_widget = data['label_value']
+                try:
+                    # Vérifier si le widget existe toujours dans l'interface
+                    if label_widget.winfo_exists():
+                        # Définir le texte à OFF (ou "Arrêté", "Inconnu", etc.)
+                        label_widget.config(text="OFF")
+                except tk.TclError:
+                    # Ignorer si le widget a été détruit entre-temps
+                    logging.warning(f"Erreur TclError accès label Kasa {key} pendant màj arrêt.")
+                    pass
 
     def _set_rules_ui_state(self, state):
         """Active ou désactive les widgets d'édition des règles."""
@@ -2180,7 +2178,7 @@ if __name__ == "__main__":
     log_format = '%(asctime)s - %(levelname)s - [%(threadName)s] - %(filename)s:%(lineno)d - %(message)s'
     # Correct date format
     date_format = '%Y-%m-%d %H:%M:%S'
-    logging.basicConfig(level=logging.DEBUG, format=log_format, datefmt=date_format)
+    #logging.basicConfig(level=logging.DEBUG, format=log_format, datefmt=date_format)
 
     # If using logger_setup.py, ensure it's configured for DEBUG level as well.
     # The basicConfig call here might be overridden by logger_setup if it also configures the root logger.
