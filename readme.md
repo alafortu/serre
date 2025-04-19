@@ -22,9 +22,9 @@ Utilise un Raspberry Pi pour :
 * Appliquer des règles définies par l'utilisateur (ex: "Allumer le chauffage si la température < 10°C") pour activer ou désactiver des appareils connectés aux prises Kasa.
 * Sauvegarder la configuration (alias des appareils/capteurs, règles) dans un fichier `config.yaml`.
 
-![Interface RASPI-CONFIG](images/ui.jpg)
-![Interface RASPI-CONFIG](images\if.jpg)
-![Interface RASPI-CONFIG](images\until.jpg)
+![UI](images/ui.jpg)
+![Règles d'automatisation SI](images/if.jpg)
+![Règles d'automatisation Jusqu'à](images/until.jpg)
 
 ## 2. Matériel Requis
 
