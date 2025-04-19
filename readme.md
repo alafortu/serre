@@ -70,11 +70,11 @@ Le protocole I2C utilise des adresses uniques pour chaque appareil sur le bus. L
 
 Liste du matériel testé :
 
-Barre Kasa KP-303
+**Barre Kasa KP-303**
 https://www.amazon.ca/dp/B083JKSSR5
-BH1750 light sensors
+**BH1750 light sensors**
 https://www.amazon.ca/dp/B0DDCD3VZC
-Capteurs de température numérique
+**Capteurs de température numérique**
 https://www.amazon.ca/dp/B094FKQ9BS
 
 ## 4. Installation sur Raspberry Pi
