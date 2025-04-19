@@ -1,9 +1,0 @@
-reste à :
-
-1. gérer le temps d'éclairage
-
-
-6. compléter le requirements.txt
-7. créer un gitignore
-9. schéma des branchements sur pi
-10. convertir à raspberry pi zéro?
