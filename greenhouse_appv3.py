@@ -210,76 +210,137 @@ class ConditionEditor(simpledialog.Dialog):
 
     def _add_condition_line(self, condition_data=None): # Accepte condition_data=None
         """Ajoute une ligne de widgets (une condition) en utilisant grid."""
-        line_frame = ttk.Frame(self.scrollable_conditions_frame)
-        line_frame.pack(fill=tk.X, expand=True, pady=1)
+        # --- DEBUGGING START ---
+        print("--- Entering _add_condition_line ---")
+        logging.debug("--- Entering _add_condition_line ---")
+        # --- DEBUGGING END ---
 
-        line_frame.columnconfigure(0, weight=0, minsize=self.COL_WIDTHS["logic"])
-        line_frame.columnconfigure(1, weight=0, minsize=self.COL_WIDTHS["type"])
-        line_frame.columnconfigure(2, weight=1, minsize=self.COL_WIDTHS["sensor"])
-        line_frame.columnconfigure(3, weight=0, minsize=self.COL_WIDTHS["op"])
-        line_frame.columnconfigure(4, weight=0, minsize=self.COL_WIDTHS["value"])
-        line_frame.columnconfigure(5, weight=0, minsize=self.COL_WIDTHS["delete"])
+        try: # Encadrer la logique principale pour attraper les erreurs
+            # Frame pour la ligne (packé dans le frame scrollable principal)
+            line_frame = ttk.Frame(self.scrollable_conditions_frame)
+            line_frame.pack(fill=tk.X, expand=True, pady=1)
+            # --- DEBUGGING ---
+            print(f"line_frame created: {line_frame}")
+            logging.debug(f"line_frame created: {line_frame}")
+            # --- DEBUGGING ---
 
-        widgets = {}
+            # Configurer les colonnes DANS la ligne (doit correspondre au header)
+            line_frame.columnconfigure(0, weight=0, minsize=self.COL_WIDTHS["logic"])
+            line_frame.columnconfigure(1, weight=0, minsize=self.COL_WIDTHS["type"])
+            line_frame.columnconfigure(2, weight=1, minsize=self.COL_WIDTHS["sensor"]) # Extensible
+            line_frame.columnconfigure(3, weight=0, minsize=self.COL_WIDTHS["op"])
+            line_frame.columnconfigure(4, weight=0, minsize=self.COL_WIDTHS["value"])
+            line_frame.columnconfigure(5, weight=0, minsize=self.COL_WIDTHS["delete"])
+            # --- DEBUGGING ---
+            print("Columns configured for line_frame")
+            logging.debug("Columns configured for line_frame")
+            # --- DEBUGGING ---
 
-        if condition_data:
-            condition_id = condition_data.get('condition_id')
-            if not condition_id:
+
+            widgets = {}
+            # --- ID Generation Logic (Corrected) ---
+            if condition_data:
+                condition_id = condition_data.get('condition_id')
+                if not condition_id:
+                    condition_id = f"new_{uuid.uuid4()}"
+            else:
                 condition_id = f"new_{uuid.uuid4()}"
-        else:
-            condition_id = f"new_{uuid.uuid4()}"
+            # --- DEBUGGING ---
+            print(f"Generated/Retrieved condition_id: {condition_id}")
+            logging.debug(f"Generated/Retrieved condition_id: {condition_id}")
+            # --- DEBUGGING ---
 
-        if len(self.condition_lines) > 0:
-            widgets['logic_label'] = ttk.Label(line_frame, text=self.logic_var.get(), width=3, anchor='e')
-            widgets['logic_label'].grid(row=0, column=0, padx=(0, 2), sticky='e')
-        else:
-            widgets['logic_spacer'] = ttk.Frame(line_frame, width=self.COL_WIDTHS["logic"]-5, height=1)
-            widgets['logic_spacer'].grid(row=0, column=0, padx=(0, 2))
+            # --- Placer les widgets dans les colonnes avec grid ---
+            # Col 0: Logique/Espaceur
+            if len(self.condition_lines) > 0:
+                widgets['logic_label'] = ttk.Label(line_frame, text=self.logic_var.get(), width=3, anchor='e')
+                widgets['logic_label'].grid(row=0, column=0, padx=(0, 2), sticky='e')
+            else:
+                widgets['logic_spacer'] = ttk.Frame(line_frame, width=self.COL_WIDTHS["logic"]-5, height=1)
+                widgets['logic_spacer'].grid(row=0, column=0, padx=(0, 2))
 
-        widgets['type_var'] = tk.StringVar()
-        widgets['type_combo'] = ttk.Combobox(line_frame, textvariable=widgets['type_var'], values=CONDITION_TYPES, state="readonly", width=12)
-        widgets['type_combo'].grid(row=0, column=1, padx=2, sticky='w')
-        widgets['type_combo'].bind('<<ComboboxSelected>>', lambda e, lw=widgets, lid=condition_id: self._on_condition_type_change(lw, lid))
+            # Col 1: Type
+            widgets['type_var'] = tk.StringVar()
+            widgets['type_combo'] = ttk.Combobox(line_frame, textvariable=widgets['type_var'], values=CONDITION_TYPES, state="readonly", width=12)
+            widgets['type_combo'].grid(row=0, column=1, padx=2, sticky='w')
+            widgets['type_combo'].bind('<<ComboboxSelected>>', lambda e, lw=widgets, lid=condition_id: self._on_condition_type_change(lw, lid))
 
-        widgets['sensor_var'] = tk.StringVar()
-        sensor_names = [""] + sorted([name for name, _id in self.available_sensors])
-        widgets['sensor_combo'] = ttk.Combobox(line_frame, textvariable=widgets['sensor_var'], values=sensor_names, state="disabled", width=20)
-        widgets['sensor_combo'].grid(row=0, column=2, padx=2, sticky='ew')
+            # Col 2: Capteur
+            widgets['sensor_var'] = tk.StringVar()
+            sensor_names = [""] + sorted([name for name, _id in self.available_sensors])
+            widgets['sensor_combo'] = ttk.Combobox(line_frame, textvariable=widgets['sensor_var'], values=sensor_names, state="disabled", width=20)
+            widgets['sensor_combo'].grid(row=0, column=2, padx=2, sticky='ew') # Place initially
 
-        widgets['operator_var'] = tk.StringVar()
-        widgets['operator_combo'] = ttk.Combobox(line_frame, textvariable=widgets['operator_var'], values=OPERATORS, state="readonly", width=4)
-        widgets['operator_combo'].grid(row=0, column=3, padx=2, sticky='w')
+            # Col 3: Opérateur
+            widgets['operator_var'] = tk.StringVar()
+            widgets['operator_combo'] = ttk.Combobox(line_frame, textvariable=widgets['operator_var'], values=OPERATORS, state="readonly", width=4)
+            widgets['operator_combo'].grid(row=0, column=3, padx=2, sticky='w')
 
-        widgets['value_var'] = tk.StringVar()
-        widgets['value_entry'] = ttk.Entry(line_frame, textvariable=widgets['value_var'], width=10)
-        widgets['value_entry'].grid(row=0, column=4, padx=2, sticky='w')
+            # Col 4: Valeur
+            widgets['value_var'] = tk.StringVar()
+            widgets['value_entry'] = ttk.Entry(line_frame, textvariable=widgets['value_var'], width=10)
+            widgets['value_entry'].grid(row=0, column=4, padx=2, sticky='w')
 
-        delete_button = ttk.Button(line_frame, text="❌", width=3, style="Red.TButton",
-                                   command=lambda frame=line_frame, c_id=condition_id: self._delete_condition_line(frame, c_id))
-        delete_button.grid(row=0, column=5, padx=(5, 2), sticky='e')
+            # Col 5: Bouton Supprimer
+            delete_button = ttk.Button(line_frame, text="❌", width=3, style="Red.TButton",
+                                       command=lambda frame=line_frame, c_id=condition_id: self._delete_condition_line(frame, c_id))
+            delete_button.grid(row=0, column=5, padx=(5, 2), sticky='e') # sticky='e' pour coller à droite de la colonne
+            # --- DEBUGGING ---
+            print("All widgets created and gridded")
+            logging.debug("All widgets created and gridded")
+            # --- DEBUGGING ---
 
-        line_info = {'frame': line_frame, 'widgets': widgets, 'condition_id': condition_id}
-        self.condition_lines.append(line_info)
 
-        if condition_data:
-             cond_type_raw = condition_data.get('type')
-             cond_type_display = next((ct for ct in CONDITION_TYPES if ct.startswith(cond_type_raw)), '') if cond_type_raw else ''
-             widgets['type_var'].set(cond_type_display)
-             widgets['operator_var'].set(condition_data.get('operator', ''))
-             if cond_type_raw == 'Capteur':
-                 sensor_id = condition_data.get('id')
-                 sensor_name = self.app.get_alias('sensor', sensor_id) if sensor_id else ''
-                 valid_sensor_names = [name for name, _id in self.available_sensors]
-                 widgets['sensor_var'].set(sensor_name if sensor_name in valid_sensor_names else "")
-                 widgets['value_var'].set(str(condition_data.get('threshold', '')))
-             elif cond_type_raw == 'Heure':
-                 widgets['value_var'].set(condition_data.get('value', ''))
-             self._on_condition_type_change(widgets, condition_id)
-        else:
-             widgets['type_var'].set(CONDITION_TYPES[0])
-             self._on_condition_type_change(widgets, condition_id)
+            line_info = {'frame': line_frame, 'widgets': widgets, 'condition_id': condition_id}
+            self.condition_lines.append(line_info)
+            # --- DEBUGGING ---
+            print(f"Appended line_info. Total lines now: {len(self.condition_lines)}")
+            logging.debug(f"Appended line_info. Total lines now: {len(self.condition_lines)}")
+            # --- DEBUGGING ---
 
-        self._update_scrollregion()
+
+            # Peupler données initiales (Utilise la variable condition_data passée en argument)
+            if condition_data:
+                 cond_type_raw = condition_data.get('type')
+                 cond_type_display = next((ct for ct in CONDITION_TYPES if ct.startswith(cond_type_raw)), '') if cond_type_raw else ''
+                 widgets['type_var'].set(cond_type_display)
+                 widgets['operator_var'].set(condition_data.get('operator', ''))
+                 if cond_type_raw == 'Capteur':
+                     sensor_id = condition_data.get('id')
+                     sensor_name = self.app.get_alias('sensor', sensor_id) if sensor_id else ''
+                     valid_sensor_names = [name for name, _id in self.available_sensors]
+                     widgets['sensor_var'].set(sensor_name if sensor_name in valid_sensor_names else "")
+                     widgets['value_var'].set(str(condition_data.get('threshold', '')))
+                 elif cond_type_raw == 'Heure':
+                     widgets['value_var'].set(condition_data.get('value', ''))
+                 self._on_condition_type_change(widgets, condition_id)
+            else:
+                 # Cas où condition_data est None (nouvelle ligne)
+                 widgets['type_var'].set(CONDITION_TYPES[0])
+                 self._on_condition_type_change(widgets, condition_id) # Apply initial state
+
+            # --- DEBUGGING ---
+            print("Calling _update_scrollregion after adding line")
+            logging.debug("Calling _update_scrollregion after adding line")
+            # --- DEBUGGING ---
+            self._update_scrollregion() # Mettre à jour après ajout/population
+
+            # --- DEBUGGING ---
+            print("--- Exiting _add_condition_line successfully ---")
+            logging.debug("--- Exiting _add_condition_line successfully ---")
+            # --- DEBUGGING END ---
+
+        except Exception as e:
+            # --- DEBUGGING: Attraper toute erreur ---
+            print(f"!!!!!!!! ERROR inside _add_condition_line: {e} !!!!!!!!")
+            logging.error(f"Error inside _add_condition_line", exc_info=True) # Loggue l'erreur complète
+            # Afficher une boîte de message à l'utilisateur
+            try:
+                # S'assurer que 'self' (l'instance de ConditionEditor) peut être le parent
+                messagebox.showerror("Erreur Interne", f"Une erreur s'est produite lors de l'ajout de la condition:\n{e}", parent=self)
+            except Exception as mb_error:
+                print(f"Could not show messagebox: {mb_error}") # Au cas où messagebox échoue aussi
+            # --- DEBUGGING END ---
 
     def _on_condition_type_change(self, line_widgets, condition_id):
         """Adapte l'UI d'une ligne (visibilité/état) en utilisant grid."""
